@@ -14,10 +14,11 @@
 (Windows: включить WSL2) + Git.
 
 ```bash
-# 1. Скопировать окружение и вписать OPENAI_API_KEY (опционально)
+# 1. Скопировать окружение (по умолчанию LLM — локальная Ollama, ключ не нужен)
 cp .env.example .env
 
-# 2. Поднять стек: PostgreSQL + Redis + backend + frontend
+# 2. Поднять стек: PostgreSQL + Redis + Ollama + backend + frontend
+#    Первый запуск скачает модель LLM в Ollama (~2 ГБ) и соберёт образы.
 docker compose up --build
 ```
 

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Agent, Company
 from app.models.enums import AgentStatus, AgentType
+from app.core.config import settings
 from app.orchestrator.orchestrator import SYSTEM_AGENT_SLUG
 
 logger = logging.getLogger(__name__)
@@ -63,8 +64,8 @@ def seed_demo(db: Session) -> dict[str, object]:
             type=AgentType.system,
             status=AgentStatus.idle,
             is_active=True,
-            model="gpt-4o-mini",
-            temperature=0.3,
+            model=settings.default_agent_model,
+            temperature=settings.default_agent_temperature,
             tools=[],
         )
         db.add(agent)

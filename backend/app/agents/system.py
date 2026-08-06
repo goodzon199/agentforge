@@ -94,15 +94,20 @@ class SystemAgent(BaseAgent):
             f"Задача: {objective}\n"
             f"Память агента: {json.dumps(context, ensure_ascii=False)[:2000]}"
         )
-        result = self.llm.chat(
-            messages=[
-                LLMMessage(role="system", content=system_prompt),
-                LLMMessage(role="user", content=user_prompt),
-            ],
-            model=self.record.model,
-            temperature=self.record.temperature,
-            max_tokens=300,
-        )
+        try:
+            result = self.llm.chat(
+                messages=[
+                    LLMMessage(role="system", content=system_prompt),
+                    LLMMessage(role="user", content=user_prompt),
+                ],
+                model=self.record.model,
+                temperature=self.record.temperature,
+                max_tokens=300,
+            )
+        except Exception:
+            # LLM провайдер недоступен/отклонил запрос — откатываемся на правила.
+            return self._route_deterministic(objective)
+
         if result is None:
             return self._route_deterministic(objective)
 

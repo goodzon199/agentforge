@@ -31,7 +31,13 @@ def db_session():
 def client(db_session):
     from fastapi.testclient import TestClient
 
+    from app.core.redis import redis_client
     from app.main import app
+
+    # Tests run synchronously: force the in-process path even if a real
+    # Redis is reachable on localhost (e.g. the docker compose stack is up).
+    saved_enabled = redis_client._enabled
+    redis_client._enabled = False
 
     def override_get_db():
         yield db_session
@@ -40,3 +46,4 @@ def client(db_session):
     c = TestClient(app)
     yield c
     app.dependency_overrides.clear()
+    redis_client._enabled = saved_enabled

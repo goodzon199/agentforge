@@ -31,6 +31,21 @@ services:
       timeout: 5s
       retries: 10
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: agentos-ollama
+    restart: unless-stopped
+    environment:
+      OLLAMA_KEEP_ALIVE: 24h
+    volumes:
+      - ollama:/root/.ollama
+    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 3 && ollama pull ${OLLAMA_MODEL:-qwen2.5:3b} && wait"]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
   backend:
     build: ./backend
     container_name: agentos-backend
@@ -41,7 +56,10 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-agentos}:${POSTGRES_PASSWORD:-agentos_secret}@db:5432/${POSTGRES_DB:-agentos}
       REDIS_URL: redis://redis:6379/0
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-ollama}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://ollama:11434/v1}
+      OPENAI_MODEL: ${OPENAI_MODEL:-qwen2.5:3b}
+      DEFAULT_AGENT_MODEL: ${DEFAULT_AGENT_MODEL:-qwen2.5:3b}
       ENVIRONMENT: ${ENVIRONMENT:-development}
     ports:
       - "${API_PORT:-8000}:8000"
@@ -49,6 +67,8 @@ services:
       db:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      ollama:
         condition: service_healthy
     volumes:
       - ./backend:/app
@@ -69,3 +89,4 @@ services:
 
 volumes:
   pgdata:
+  ollama:
