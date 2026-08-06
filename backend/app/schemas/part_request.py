@@ -53,6 +53,9 @@ class SupplierOfferRead(BaseModel):
     purchase_price: Decimal | None = None
     quantity: int | None = None
     delivery_days: int | None = None
+    customer_price: Decimal | None = None
+    total_price: Decimal | None = None
+    margin_percent: Decimal | None = None
     created_at: datetime
 
 
@@ -91,4 +94,25 @@ class PartSearchResult(BaseModel):
     suppliers_succeeded: int
     suppliers_failed: int
     next_action: str = "pricing_parts"
+
+
+class PartQuoteRead(BaseModel):
+    """The pricing-engine result for a part request (stored quote)."""
+
+    status: str
+    part_request_id: uuid.UUID
+    run_id: uuid.UUID | None = None
+    triggered_by: str = ""
+    margin_percent: float | None = None
+    currency: str = "RUB"
+    offers_total: int = 0
+    offers_priced: int = 0
+    quantity: int = 1
+    best_offer_id: uuid.UUID | None = None
+    best_brand: str = ""
+    best_article: str = ""
+    best_part_name: str = ""
+    best_unit_price: Decimal | None = None
+    best_total_price: Decimal | None = None
+    priced_at: datetime | None = None
 

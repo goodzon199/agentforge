@@ -1,4 +1,4 @@
-import type { PartRequest, SupplierOffer, SupplierSearchRun } from "@/lib/types";
+import type { PartQuote, PartRequest, SupplierOffer, SupplierSearchRun } from "@/lib/types";
 import { getStoredUser } from "@/lib/api";
 import { StatusBadge } from "@/components/ui";
 
@@ -44,6 +44,7 @@ type Props = {
   partRequests: PartRequest[];
   offers: SupplierOffer[];
   searchRuns: SupplierSearchRun[];
+  quote: PartQuote | null;
   searching: boolean;
   onSearch: (partRequestId: string) => void;
 };
@@ -52,6 +53,7 @@ export function PartRequestPanel({
   partRequests,
   offers,
   searchRuns,
+  quote,
   searching,
   onSearch,
 }: Props) {
@@ -118,6 +120,18 @@ export function PartRequestPanel({
         ) : null}
       </div>
 
+      {quote && quote.status === "priced" && quote.best_total_price ? (
+        <div className="mt-3 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-xs text-slate-200">
+          <span className="font-medium text-white">Лучшее предложение:</span>{" "}
+          {[quote.best_brand, quote.best_article].filter(Boolean).join(" ") || "—"} ·{" "}
+          {formatPrice(quote.best_unit_price)} /шт × {quote.quantity} ={" "}
+          <b className="text-white">{formatPrice(quote.best_total_price)}</b>
+          {quote.margin_percent !== null && quote.margin_percent !== undefined ? (
+            <span className="text-slate-400"> (наценка {quote.margin_percent}%)</span>
+          ) : null}
+        </div>
+      ) : null}
+
       {offers.length > 0 ? (
         <div className="mt-3 overflow-x-auto">
           <table className="w-full min-w-[560px] text-left text-xs">
@@ -126,6 +140,7 @@ export function PartRequestPanel({
                 <th className="py-1.5 pr-3 font-medium">Бренд</th>
                 <th className="py-1.5 pr-3 font-medium">Артикул</th>
                 <th className="py-1.5 pr-3 font-medium">Название</th>
+                <th className="py-1.5 pr-3 font-medium">Цена</th>
                 {isManager ? (
                   <th className="py-1.5 pr-3 font-medium">Закупка</th>
                 ) : null}
@@ -140,6 +155,14 @@ export function PartRequestPanel({
                   <td className="py-1.5 pr-3 text-slate-200">{o.brand || "—"}</td>
                   <td className="py-1.5 pr-3 font-mono text-slate-200">{o.article || "—"}</td>
                   <td className="py-1.5 pr-3 text-slate-300">{o.part_name || "—"}</td>
+                  <td className="py-1.5 pr-3 text-slate-100">
+                    {formatPrice(o.customer_price)}
+                    {o.total_price && o.total_price !== o.customer_price ? (
+                      <span className="block text-[10px] text-slate-400">
+                        итог {formatPrice(o.total_price)}
+                      </span>
+                    ) : null}
+                  </td>
                   {isManager ? (
                     <td className="py-1.5 pr-3 text-slate-100">{formatPrice(o.purchase_price)}</td>
                   ) : null}

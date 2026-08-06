@@ -10,6 +10,7 @@ import type {
   ConversationMessage,
   Customer,
   MessageSent,
+  PartQuote,
   PartRequest,
   SupplierOffer,
   SupplierSearchRun,
@@ -33,6 +34,7 @@ export default function ConversationsPage() {
   const [partRequests, setPartRequests] = useState<PartRequest[]>([]);
   const [offers, setOffers] = useState<SupplierOffer[]>([]);
   const [searchRuns, setSearchRuns] = useState<SupplierSearchRun[]>([]);
+  const [quote, setQuote] = useState<PartQuote | null>(null);
   const [searching, setSearching] = useState(false);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -54,18 +56,22 @@ export default function ConversationsPage() {
     if (!active) {
       setOffers([]);
       setSearchRuns([]);
+      setQuote(null);
       return;
     }
     try {
-      const [loadedOffers, loadedRuns] = await Promise.all([
+      const [loadedOffers, loadedRuns, loadedQuote] = await Promise.all([
         api.get<SupplierOffer[]>(`/part_requests/${active.id}/offers`),
         api.get<SupplierSearchRun[]>(`/part_requests/${active.id}/search-runs`),
+        api.get<PartQuote>(`/part_requests/${active.id}/quote`),
       ]);
       setOffers(loadedOffers);
       setSearchRuns(loadedRuns);
+      setQuote(loadedQuote);
     } catch {
       setOffers([]);
       setSearchRuns([]);
+      setQuote(null);
     }
   }
 
@@ -261,6 +267,7 @@ export default function ConversationsPage() {
                   partRequests={partRequests}
                   offers={offers}
                   searchRuns={searchRuns}
+                  quote={quote}
                   searching={searching}
                   onSearch={runSearch}
                 />

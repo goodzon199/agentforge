@@ -21,12 +21,39 @@
 > `Supplier`, `SupplierOffer`, `SupplierSearchRun`, `SupplierSearchAttempt`,
 > API `/suppliers` и `/part_requests/{id}/offers|search|search-runs`,
 > таблица предложений в UI, handoff-задача `pricing_parts`.
+>
+> Sprint 2 (часть 4) — Цены: `PricingService` (наценка к закупочной цене,
+> per-company margin из `company.settings`), агент `PricingAgent`,
+> столбцы `customer_price`/`total_price`/`margin_percent` у офферов,
+> REST API `/part_requests/{id}/price|quote`, блок «Лучшее предложение»
+> с ценой для менеджера в UI.
 
 ---
 
 ## Что сделано (по порядку, последнее сверху)
 
-1. **feat/supplier-adapters** — вертикальный срез «поиск предложений»:
+1. **feat/pricing-engine** — вертикальный срез «цены на заявку»:
+   - `PricingService`: клиентская цена = закупочная × (1 + margin/100), округление
+     half-up; margin берётся из `company.settings.pricing.margin_percent`
+     (по умолчанию `PRICING_MARGIN_PERCENT=30.0`, валюта `RUB`).
+   - `process(part_request_id, run_id=None)` штампует `customer_price`,
+     `total_price` (× кол-во), `margin_percent` у всех офферов последнего поиска,
+     выбирает лучшее предложение (мин. по `total_price`) и пишет
+     `structured_data.pricing` ({best_offer_id, quote_total, currency, margin_percent}).
+   - `PricingAgent` — обработчик handoff-задачи `pricing_parts`, которую
+     SearchAgent создаёт после поиска; ответ агента со штампом цены
+     и routing_decision.
+   - REST API под JWT: `POST /part_requests/{id}/price` (пересчёт по текущему
+     поиску) и `GET /part_requests/{id}/quote` (хранимый квоут или статус
+     `not_priced`); схемы `SupplierOfferRead`/`PartQuoteRead`.
+   - Frontend: в панели заявки блок «Лучшее предложение» (бренд, артикул,
+     цена за единицу и за позицию), колонка «Цена» в таблице предложений
+     (видима менеджеру), квоут подтягивается из `/quote`.
+   - Alembic-миграция `7f3b9c2d4e5a` (столбцы офферов + `companies.settings`),
+     застамплена в live-БД; сидинг создаёт агента `pricing-agent`.
+   - Тесты 118/118: PricingService (14), pricing API (7), DoD-сценарий расширен
+     до «диалог → VIN → поиск → pricing → quote», сидинг + дашборд.
+2. **feat/supplier-adapters** — вертикальный срез «поиск предложений»:
    - Адаптеры поставщиков: `MockSupplierAdapter` (стабильный каталог BREMBO P06089 /
      TRW GDB2119) и `CsvSupplierAdapter` (маппинг колонок через конфиг
      `{delimiter, encoding, columns}`), `normalize_article()` (только isalnum, верхний регистр),

@@ -55,6 +55,16 @@ INTAKE_AGENT_INSTRUCTIONS = (
     "при готовности передаёт заявку в поиск."
 )
 
+PRICING_AGENT_GOAL = (
+    "Рассчитывать цену для клиента по предложениям поставщиков (наценка к закупке)."
+)
+PRICING_AGENT_INSTRUCTIONS = (
+    "Ты — PricingAgent. Получаешь задачу pricing_parts с part_request_id и run_id, "
+    "читаешь предложения поставщиков (SupplierOffer), применяет наценку компании к "
+    "закупочной цене и сохраняет расчёт (цену за единицу, итог, лучшее предложение) "
+    "в structured_data заявки."
+)
+
 # Demo supplier backend for the parts pipeline (mock, deterministic).
 DEMO_SUPPLIERS = [
     {
@@ -142,6 +152,7 @@ def seed_demo(db: Session) -> dict[str, object]:
         "email_agent": False,
         "search_agent": False,
         "intake_agent": False,
+        "pricing_agent": False,
         "knowledge": False,
         "suppliers": False,
         "admin": False,
@@ -221,6 +232,21 @@ def seed_demo(db: Session) -> dict[str, object]:
             "заявку на запчасть (PartRequest), уточняет данные и передаёт заявку в поиск."
         ),
         instructions=INTAKE_AGENT_INSTRUCTIONS,
+        agent_type=AgentType.specialized,
+        company_id=company.id,
+    )
+
+    created["pricing_agent"] = _ensure_agent(
+        db,
+        slug="pricing-agent",
+        name="PricingAgent",
+        role="Расчёт цены по предложениям поставщиков",
+        goal=PRICING_AGENT_GOAL,
+        description=(
+            "Специализированный агент: рассчитывает клиентскую цену (наценка к "
+            "закупочной) по предложениям поставщиков и сохраняет расчёт в заявке."
+        ),
+        instructions=PRICING_AGENT_INSTRUCTIONS,
         agent_type=AgentType.specialized,
         company_id=company.id,
     )

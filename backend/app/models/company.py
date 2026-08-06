@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
-from sqlalchemy import String, Text, Boolean, Integer
+from sqlalchemy import JSON, Boolean, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -19,6 +20,7 @@ class Company(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     description: Mapped[str] = mapped_column(Text, nullable=False, default="")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     agent_quota: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    settings: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     agents: Mapped[list["Agent"]] = relationship("Agent", back_populates="company", lazy="selectin")
     tasks: Mapped[list["Task"]] = relationship("Task", back_populates="company", lazy="selectin")

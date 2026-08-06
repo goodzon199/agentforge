@@ -4,7 +4,7 @@ import uuid
 from typing import Any
 
 from app.agents.base import AgentOutput, BaseAgent
-from app.models import PartRequest
+from app.models import PartRequest, Task
 from app.services.parts_search_service import PartsSearchService
 from app.services.task_service import TaskService
 
@@ -75,8 +75,14 @@ class SearchAgent(BaseAgent):
 
         service = PartsSearchService(self.db)
         result = service.search(part_request, triggered_by="agent")
-        pricing_task_id = self._create_pricing_task(part_request, result)
-        self.db.commit()
+        pricing_task = self._create_pricing_task(part_request, result)
+        if pricing_task is not None:
+            # Lazy import to avoid a circular dependency (agents <-> orchestrator).
+            from app.orchestrator.orchestrator import orchestrator
+
+            orchestrator.submit(self.db, pricing_task)
+        else:
+            self.db.commit()
 
         response = (
             f"Поиск предложений завершён: найдено {result['offers_found']} "
@@ -94,7 +100,7 @@ class SearchAgent(BaseAgent):
                 "suppliers_succeeded": result["suppliers_succeeded"],
                 "suppliers_failed": result["suppliers_failed"],
                 "next_action": "pricing_parts",
-                "pricing_task_id": str(pricing_task_id) if pricing_task_id else None,
+                "pricing_task_id": str(pricing_task.id) if pricing_task else None,
             },
             routing_decision={
                 "needs_agent": None,
@@ -106,9 +112,9 @@ class SearchAgent(BaseAgent):
 
     def _create_pricing_task(
         self, part_request: PartRequest, result: dict[str, Any]
-    ) -> uuid.UUID | None:
-        """Hand-off contract: pricing_parts tasks are created but run by the
-        pricing engine (sprint 2.4)."""
+    ) -> Task | None:
+        """Hand-off contract: a pricing_parts task is created and submitted to
+        the orchestrator, which runs the pricing engine (PricingAgent)."""
         if result["offers_found"] == 0:
             return None
         task = TaskService(self.db).create(
@@ -122,7 +128,7 @@ class SearchAgent(BaseAgent):
         )
         self.db.add(task)
         self.db.flush()
-        return task.id
+        return task
 
     # --- Knowledge base search --------------------------------------------
 

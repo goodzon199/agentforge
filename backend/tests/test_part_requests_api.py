@@ -93,6 +93,28 @@ def test_full_flow_dod(client, db_session):
     assert len(offers) == 2
     assert {o["article"] for o in offers} == {"P06089", "GDB2119"}
 
+    # 7. The pricing_parts hand-off task was created and completed inline.
+    pricing_tasks = [
+        t
+        for t in tasks
+        if t["objective"] == "pricing_parts"
+        and t["input_data"].get("part_request_id") == part_request["id"]
+    ]
+    assert len(pricing_tasks) == 1
+    assert pricing_tasks[0]["status"] == "completed"
+    assert pricing_tasks[0]["output_data"]["data"]["action"] == "pricing_parts"
+    assert pricing_tasks[0]["output_data"]["data"]["best_article"] == "GDB2119"
+    assert pricing_tasks[0]["output_data"]["data"]["best_total_price"] == "7930.00"
+
+    # 8. Offers carry the customer-facing price and the quote is available.
+    offers = client.get(f"/api/v1/part_requests/{part_request['id']}/offers").json()
+    priced = [o for o in offers if o["customer_price"] is not None]
+    assert len(priced) == 2
+    quote = client.get(f"/api/v1/part_requests/{part_request['id']}/quote").json()
+    assert quote["status"] == "priced"
+    assert quote["best_article"] == "GDB2119"
+    assert quote["best_total_price"] == "7930.00"
+
 
 def test_reprocessing_message_does_not_duplicate(client, db_session):
     conversation_id = _make_conversation(client, db_session)

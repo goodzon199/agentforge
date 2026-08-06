@@ -197,6 +197,9 @@ export type SupplierOffer = {
   purchase_price: string | null;
   quantity: number | null;
   delivery_days: number | null;
+  customer_price: string | null;
+  total_price: string | null;
+  margin_percent: string | null;
   created_at: string;
 };
 
@@ -225,4 +228,23 @@ export type SupplierSearchRun = {
   completed_at: string | null;
   created_at: string;
   attempts: SupplierAttempt[];
+};
+
+export type PartQuote = {
+  status: string;
+  part_request_id: string;
+  run_id: string | null;
+  triggered_by: string;
+  margin_percent: number | null;
+  currency: string;
+  offers_total: number;
+  offers_priced: number;
+  quantity: number;
+  best_offer_id: string | null;
+  best_brand: string;
+  best_article: string;
+  best_part_name: string;
+  best_unit_price: string | null;
+  best_total_price: string | null;
+  priced_at: string | null;
 };

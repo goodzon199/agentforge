@@ -55,3 +55,12 @@ def test_seed_creates_search_agent_and_knowledge(db_session):
     entries = db_session.scalars(select(KnowledgeEntry)).all()
     assert len(entries) == 3
     assert any("Тормозные" in e.title for e in entries)
+
+
+def test_seed_creates_pricing_agent(db_session):
+    agent = db_session.scalars(
+        select(Agent).where(Agent.slug == "pricing-agent")
+    ).first()
+    assert agent is not None
+    assert agent.name == "PricingAgent"
+    assert agent.type.value == "specialized"

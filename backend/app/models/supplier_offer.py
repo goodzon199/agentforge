@@ -39,6 +39,12 @@ class SupplierOffer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
     delivery_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # Stamped by the pricing engine (sprint 2.4). customer_price is the
+    # customer-facing unit price, total_price = customer_price * quantity.
+    customer_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    total_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    margin_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+
     supplier: Mapped["Supplier"] = relationship("Supplier", lazy="selectin")
 
     def __repr__(self) -> str:  # pragma: no cover

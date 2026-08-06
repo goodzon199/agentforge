@@ -42,6 +42,12 @@ class Settings(BaseSettings):
     # Supplier search (sprint 2.3)
     supplier_search_timeout: float = 15.0
 
+    # Pricing engine (sprint 2.4)
+    # Наценка по умолчанию к закупочной цене поставщика (проценты). Может быть
+    # переопределена на уровне компании в settings["pricing"]["margin_percent"].
+    pricing_margin_percent: float = 30.0
+    pricing_currency: str = "RUB"
+
     # E-mail (SMTP)
     smtp_host: str = ""
     smtp_port: int = 1025

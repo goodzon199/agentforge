@@ -4,10 +4,15 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import get_part_request_service, get_parts_search_service
+from app.api.deps import (
+    get_part_request_service,
+    get_parts_search_service,
+    get_pricing_service,
+)
 from app.models import PartRequest
 from app.models.enums import PartRequestStatus
 from app.schemas.part_request import (
+    PartQuoteRead,
     PartRequestRead,
     PartRequestUpdate,
     PartSearchResult,
@@ -17,6 +22,7 @@ from app.schemas.part_request import (
 )
 from app.services.part_request_service import PartRequestService
 from app.services.parts_search_service import PartsSearchService
+from app.services.pricing_service import PricingService
 
 router = APIRouter(prefix="/part_requests", tags=["part_requests"])
 
@@ -34,6 +40,9 @@ def _offer_read(offer) -> SupplierOfferRead:
         purchase_price=offer.purchase_price,
         quantity=offer.quantity,
         delivery_days=offer.delivery_days,
+        customer_price=offer.customer_price,
+        total_price=offer.total_price,
+        margin_percent=offer.margin_percent,
         created_at=offer.created_at,
     )
 
@@ -185,3 +194,30 @@ def list_search_runs(
     if service.db.get(PartRequest, part_request_id) is None:
         raise HTTPException(status_code=404, detail="Заявка не найдена")
     return [_run_read(r) for r in service.list_runs(part_request_id)]
+
+
+# --- Pricing engine ---------------------------------------------------------
+
+
+@router.post("/{part_request_id}/price", response_model=PartQuoteRead)
+def run_pricing(
+    part_request_id: uuid.UUID,
+    part_service: PartRequestService = Depends(get_part_request_service),
+    pricing_service: PricingService = Depends(get_pricing_service),
+):
+    if part_service.get(part_request_id) is None:
+        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    summary = pricing_service.process(part_request_id, triggered_by="user")
+    return PartQuoteRead(**summary)
+
+
+@router.get("/{part_request_id}/quote", response_model=PartQuoteRead)
+def get_quote(
+    part_request_id: uuid.UUID,
+    part_service: PartRequestService = Depends(get_part_request_service),
+    pricing_service: PricingService = Depends(get_pricing_service),
+):
+    if part_service.get(part_request_id) is None:
+        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    summary = pricing_service.summary(part_request_id)
+    return PartQuoteRead(**summary)

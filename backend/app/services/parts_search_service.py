@@ -67,6 +67,11 @@ class PartsSearchService:
         self.db.add(run)
         part_request.status = PartRequestStatus.searching
         self.db.flush()
+        # run.id is assigned by the flush; record the latest run so the
+        # pricing step resolves it deterministically.
+        run_data = part_request.structured_data.copy()
+        run_data["latest_search_run_id"] = str(run.id)
+        part_request.structured_data = run_data
 
         suppliers = self._active_suppliers(part_request.company_id)
         if not suppliers:
