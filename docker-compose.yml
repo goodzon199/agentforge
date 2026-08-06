@@ -31,6 +31,19 @@ services:
       timeout: 5s
       retries: 10
 
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: agentos-mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"   # SMTP (внутри сети — smtp://mailhog:1025)
+      - "8025:8025"   # Web-UI со входящими письмами
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8025"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   ollama:
     image: ollama/ollama:latest
     container_name: agentos-ollama
@@ -60,7 +73,15 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://ollama:11434/v1}
       OPENAI_MODEL: ${OPENAI_MODEL:-qwen2.5:3b}
       DEFAULT_AGENT_MODEL: ${DEFAULT_AGENT_MODEL:-qwen2.5:3b}
+      SMTP_HOST: ${SMTP_HOST:-mailhog}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-agentforge@agentos.local}
+      EMAIL_DEFAULT_TO: ${EMAIL_DEFAULT_TO:-demo@agentos.local}
       ENVIRONMENT: ${ENVIRONMENT:-development}
+    volumes:
+      - ./backend:/app
     ports:
       - "${API_PORT:-8000}:8000"
     depends_on:
@@ -70,8 +91,8 @@ services:
         condition: service_healthy
       ollama:
         condition: service_healthy
-    volumes:
-      - ./backend:/app
+      mailhog:
+        condition: service_healthy
 
   frontend:
     build:

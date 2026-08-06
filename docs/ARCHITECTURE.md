@@ -29,10 +29,12 @@ Orchestrator.process(task)
    2. SystemAgent.execute(objective)
         - LLM доступен? -> классификация маршрута через LLM
         - иначе        -> детерминированные правила (search/email/...)
-   3. результат: {response, routing_decision, handoff_agent}
-   4. статус=completed, output_data, события логов
-   5. память: agent.remember(...)  (short memory)
-   6. статистика агента: tasks_total / completed / success_rate
+   3. handoff? -> задача передаётся специализированному агенту
+        EmailAgent.execute(objective, input_data) -> email_tool -> SMTP
+   4. результат: {response, routing_decision, handoff_agent}
+   5. статус=completed, output_data, события логов
+   6. память: agent.remember(...)  (short memory)
+   7. статистика агента-исполнителя: tasks_total / completed / success_rate
 ```
 
 ## Модель «цифровой сотрудник» (Agent)
@@ -55,6 +57,33 @@ Orchestrator.process(task)
 | tasks_completed | статистика                                   |
 | avg_success_rate| статистика (для оценки «обучения»)           |
 
+## Агенты
+
+- **SystemAgent** (`system-agent`) — диспетчер/роутер. Возвращает
+  `handoff_agent` (например `EmailAgent`), если задача требует специалиста.
+- **EmailAgent** (`email-agent`) — принимает задачу после handoff, извлекает
+  `to`/`subject`/`body` из `input_data` (fallback: `EMAIL_DEFAULT_TO`, objective)
+  и отправляет письмо через `email_tool`.
+
+Маршрутизация SystemAgent по handoff-имени в тип агента — в `agents/registry.py`
+(`HANDOFF_TO_TYPE`), слот для записи в БД — slug `<type>-agent`.
+
+## Передача задач между агентами (handoff)
+
+`Orchestrator.process()` после ответа SystemAgent вызывает
+`agent_registry.resolve_handoff(decision.handoff_agent)`:
+
+```
+SystemAgent -> (needs_agent: "EmailAgent")
+             -> resolve_handoff("EmailAgent") == "email"
+             -> запись агента по slug "email-agent"
+             -> EmailAgent.execute(objective, input_data)
+             -> финальный ответ/события/статистика от исполнителя
+```
+
+Если handoff-агент не существует в реестре (например `SearchAgent` пока не
+реализован) — задача завершается ответом SystemAgent без передачи.
+
 ## Память
 
 ```
@@ -73,9 +102,11 @@ MemoryService собирает контекст агента через `build_c
 
 Каждый инструмент — отдельный модуль в `app/tools/builtin/`:
 
+- `email_tool.py` — реальная отправка по SMTP (`smtplib`, MIME multipart,
+  версия 2.0.0). В демо-стеке `SMTP_HOST=mailhog` — письма видны в UI :8025.
+  При ошибке SMTP возвращает `ToolResult(ok=False, error=...)`, агент не падает.
 - `search_tool.py` — контракт поиска (query/filters/limit). В Sprint 1 возвращает
   сигнал `handoff_required: SearchAgent`.
-- `email_tool.py` — контракт отправки письма.
 - `http_tool.py` — общий HTTP-контракт для внешних API (Rossko, Armtek, CRM и др.).
 
 Добавление инструмента = новый класс в `builtin/` + регистрация в `ToolRegistry`.
@@ -112,8 +143,8 @@ alembic upgrade head
 
 ## Планы (Sprint 2+)
 
-- Специализированные агенты: SearchAgent, EmailAgent (реальные провайдеры).
-- Действительная передача задач между агентами (handoff через оркестратор).
+- **SearchAgent** — реализация агента поиска (маршрутизация и слот в реестре готовы).
+- **EmailAgent** — расширение: шаблоны писем, вложения, несколько SMTP-профилей.
 - Эмбеддинги + векторный поиск по Knowledge Base.
 - Авторизация: JWT, пользователи, права компаний.
 - Метрики и дашборд «цифровой штат».

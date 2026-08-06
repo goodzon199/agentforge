@@ -33,6 +33,14 @@ class Settings(BaseSettings):
     orchestrator_workers: int = 4
     task_queue_name: str = "agentos:tasks"
 
+    # E-mail (SMTP)
+    smtp_host: str = ""
+    smtp_port: int = 1025
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "agentforge@agentos.local"
+    email_default_to: str = "demo@agentos.local"
+
     @property
     def is_llm_available(self) -> bool:
         return bool(self.openai_api_key)

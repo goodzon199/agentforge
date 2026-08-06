@@ -77,7 +77,12 @@ class Orchestrator:
         return task
 
     def process(self, db: Session, task: Task) -> Task:
-        """Execute one task against the agent pipeline."""
+        """Execute one task against the agent pipeline.
+
+        Flow: SystemAgent routes the task; if it hands off to a specialized
+        agent (e.g. EmailAgent), the task is dispatched to that agent and
+        the final answer comes from it.
+        """
         task.status = TaskStatus.running
         task.started_at = _now()
         db.commit()
@@ -87,7 +92,7 @@ class Orchestrator:
             if agent_record is None:
                 raise RuntimeError("SystemAgent не найден в базе.")
 
-            agent = agent_registry.get_class("system")(
+            system = agent_registry.get_class("system")(
                 record=agent_record,
                 memory=MemoryService(db),
                 tools=self.tools,
@@ -97,11 +102,50 @@ class Orchestrator:
             self._add_event(
                 db,
                 task,
-                source=f"agents.{agent.slug}",
-                message=f"Агент {agent.name} получил задачу.",
+                source=f"agents.{system.slug}",
+                message=f"Агент {system.name} получил задачу.",
             )
 
-            output = agent.execute(task.objective, task.input_data or {})
+            decision = system.execute(task.objective, task.input_data or {})
+            system.remember(
+                f"Задача: {task.objective} -> маршрут: {decision.routing_decision}",
+                kind="routing",
+            )
+
+            # Hand off to a specialized agent when SystemAgent determined one.
+            handoff_type = agent_registry.resolve_handoff(decision.handoff_agent)
+            if handoff_type:
+                target_record = self._resolve_agent_by_type(db, handoff_type)
+                if target_record is None:
+                    raise RuntimeError(
+                        f"Агент для {decision.handoff_agent} не найден в базе."
+                    )
+                self._add_event(
+                    db,
+                    task,
+                    source="orchestrator",
+                    message=f"SystemAgent передал задачу агенту {target_record.name}.",
+                )
+
+                target = agent_registry.get_class(handoff_type)(
+                    record=target_record,
+                    memory=MemoryService(db),
+                    tools=self.tools,
+                    llm=self.llm,
+                )
+                output = target.execute(task.objective, task.input_data or {})
+                target.remember(
+                    f"Задача: {task.objective} -> {output.response}",
+                    kind="task_result",
+                )
+                final_agent = target_record
+            else:
+                output = decision
+                final_agent = agent_record
+                system.remember(
+                    f"Задача: {task.objective} -> {output.response}",
+                    kind="task_result",
+                )
 
             task.output_data = {
                 "response": output.response,
@@ -112,19 +156,13 @@ class Orchestrator:
             task.status = TaskStatus.completed
             task.completed_at = _now()
 
-            # Memory: the agent remembers what it did.
-            agent.remember(
-                f"Задача: {task.objective} -> {output.response}",
-                kind="task_result",
-            )
-
             self._add_event(
                 db,
                 task,
                 source="orchestrator",
                 message=f"Задача завершена. {output.response}",
             )
-            self._update_statistics(db, agent_record, success=True)
+            self._update_statistics(db, final_agent, success=True)
             db.commit()
             return task
 
@@ -159,6 +197,11 @@ class Orchestrator:
 
     def _resolve_system_agent(self, db: Session) -> AgentRecord | None:
         stmt = select(AgentRecord).where(AgentRecord.slug == SYSTEM_AGENT_SLUG)
+        return db.scalars(stmt).first()
+
+    def _resolve_agent_by_type(self, db: Session, agent_type: str) -> AgentRecord | None:
+        """Resolve an agent record by its type slug convention (e.g. email -> email-agent)."""
+        stmt = select(AgentRecord).where(AgentRecord.slug == f"{agent_type}-agent")
         return db.scalars(stmt).first()
 
     def _add_event(

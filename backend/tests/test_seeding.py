@@ -18,3 +18,20 @@ def test_seed_creates_company_and_system_agent(db_session):
     assert agent is not None
     assert agent.name == "SystemAgent"
     assert agent.company_id == company.id
+
+
+def test_seed_creates_email_agent_with_tool(db_session):
+    from app.models import AgentTool
+
+    agent = db_session.scalars(
+        select(Agent).where(Agent.slug == "email-agent")
+    ).first()
+    assert agent is not None
+    assert agent.name == "EmailAgent"
+    assert agent.type.value == "specialized"
+
+    tool = db_session.scalars(
+        select(AgentTool).where(AgentTool.agent_id == agent.id)
+    ).first()
+    assert tool is not None
+    assert tool.tool_name == "email"

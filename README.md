@@ -4,7 +4,8 @@
 каждый агент — это цифровой сотрудник с идентичностью, целью, инструкциями,
 памятью, инструментами, правами, моделью и статистикой.
 
-> Sprint 1 — Foundation. Цель этого этапа: получить **запускаемую платформу**, а не набор файлов.
+> Sprint 1 — Foundation: запускаемая платформа. Уже работают SystemAgent (роутер),
+> EmailAgent (реальная отправка писем через MailHog) и передача задач между агентами.
 
 ---
 
@@ -17,7 +18,7 @@
 # 1. Скопировать окружение (по умолчанию LLM — локальная Ollama, ключ не нужен)
 cp .env.example .env
 
-# 2. Поднять стек: PostgreSQL + Redis + Ollama + backend + frontend
+# 2. Поднять стек: PostgreSQL + Redis + MailHog + Ollama + backend + frontend
 #    Первый запуск скачает модель LLM в Ollama (~2 ГБ) и соберёт образы.
 docker compose up --build
 ```
@@ -26,23 +27,31 @@ docker compose up --build
 
 - Frontend (AgentForge UI): http://localhost:3000
 - Backend API: http://localhost:8000 — Swagger: http://localhost:8000/docs
+- **MailHog** (входящие письма EmailAgent): http://localhost:8025
 - PostgreSQL: localhost:5432, Redis: localhost:6379
 
 Первый экран — **Обзор**: Компании / Агенты / Задачи / Логи / Настройки.
 
-## Первый агент
+## Агенты
 
-При первом старте автоматически создаются демо-компания и **SystemAgent**.
+При первом старте автоматически создаются демо-компания, **SystemAgent** и **EmailAgent**.
 
-SystemAgent умеет одно: получает задачу и определяет нужного агента.
+- **SystemAgent** — диспетчер: получает задачу и определяет нужного агента
+  (детерминированные правила или LLM через Ollama).
+- **EmailAgent** — специалист по почте: принимает задачу от SystemAgent,
+  достаёт получателя/тему/текст и отправляет письмо по SMTP (в демо — MailHog,
+  UI на http://localhost:8025). Получателя можно указать в поле «Кому (email)».
 
 ```
 Задача: "Найди тормозные колодки"
 Ответ:  "Для выполнения этой задачи нужен SearchAgent."
+
+Задача: "Отправь письмо клиенту: напомни про встречу завтра в 10:00"
+Письмо:  SystemAgent -> EmailAgent -> SMTP/MailHog -> http://localhost:8025
 ```
 
-Проверьте прямо в UI: **Задачи → «Новая задача»** → введите текст → результат и
-журнал событий появятся мгновенно. Работает даже без ключа OpenAI —
+Проверьте прямо в UI: **Задачи → «Новая задача»** → введите текст → результат,
+журнал событий и письмо в MailHog. Работает даже без ключа OpenAI —
 детерминированный режим маршрутизации.
 
 ## Локальная разработка (без Docker)
@@ -66,7 +75,7 @@ npm run dev                   # http://localhost:3000
 
 ```bash
 cd backend
-.venv\Scripts\python.exe -m pytest     # 12 тестов: агенты, оркестратор, API, память
+.venv\Scripts\python.exe -m pytest     # 17 тестов: агенты, оркестратор, API, память, email
 ```
 
 ## Структура
@@ -77,9 +86,9 @@ agentforge/
 │   ├── app/
 │   │   ├── api/v1/        # REST API: companies, agents, tasks, logs, settings, dashboard
 │   │   ├── core/          # config, database, redis, seeding
-│   │   ├── agents/        # BaseAgent, SystemAgent, реестр агентов
-│   │   ├── orchestrator/  # сердце платформы: маршрутизация, очередь, воркеры
-│   │   ├── tools/         # каждый инструмент — отдельный модуль (search, email, http)
+│   │   ├── agents/        # BaseAgent, SystemAgent, EmailAgent, реестр агентов
+│   │   ├── orchestrator/  # сердце платформы: маршрутизация, handoff, очередь, воркеры
+│   │   ├── tools/         # каждый инструмент — отдельный модуль (email, search, http)
 │   │   ├── models/        # Agent (цифровой сотрудник), Company, Task, Memory
 │   │   ├── services/      # сервисный слой
 │   │   ├── memory/        # Short / Long / Knowledge Base
@@ -90,7 +99,7 @@ agentforge/
 ├── frontend/              # Next.js + TypeScript + Tailwind
 ├── docker/
 ├── docs/
-└── docker-compose.yml
+└── docker-compose.yml     # db, redis, mailhog, ollama, backend, frontend
 ```
 
 ## Стек
@@ -99,6 +108,7 @@ agentforge/
 |-----------|---------------------------------------------------|
 | Backend   | Python 3.12, FastAPI, SQLAlchemy 2, Alembic       |
 | Данные    | PostgreSQL 16, Redis 7                            |
+| Почта     | SMTP (демо: MailHog, UI :8025)                    |
 | Frontend  | Next.js 15, TypeScript, Tailwind CSS              |
 | Инфра     | Docker Compose                                    |
 | LLM       | OpenAI (и совместимые: Azure, Ollama)             |

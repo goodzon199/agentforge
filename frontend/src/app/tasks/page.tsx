@@ -12,6 +12,7 @@ export default function TasksPage() {
 
   const [companyId, setCompanyId] = useState("");
   const [objective, setObjective] = useState("");
+  const [emailTo, setEmailTo] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [result, setResult] = useState<Task | null>(null);
@@ -27,6 +28,9 @@ export default function TasksPage() {
         title: objective.slice(0, 120),
         objective: objective.trim(),
         priority: "normal",
+        input_data: {
+          ...(emailTo.trim() ? { to: emailTo.trim() } : {}),
+        },
       });
       setResult(task);
       setObjective("");
@@ -54,10 +58,18 @@ export default function TasksPage() {
               </option>
             ))}
           </select>
+          <label className="mb-1 block text-xs text-slate-500">Кому (email, необязательно)</label>
+          <input
+            type="email"
+            className="input mb-3"
+            placeholder="demo@agentos.local"
+            value={emailTo}
+            onChange={(e) => setEmailTo(e.target.value)}
+          />
           <label className="mb-1 block text-xs text-slate-500">Задача для SystemAgent</label>
           <textarea
             className="input mb-3 min-h-[80px] resize-y"
-            placeholder="Например: Найди тормозные колодки"
+            placeholder="Например: Найди тормозные колодки или Отправь письмо клиенту"
             value={objective}
             onChange={(e) => setObjective(e.target.value)}
             required
