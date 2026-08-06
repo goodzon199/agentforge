@@ -94,3 +94,46 @@ export type LoginResponse = {
   token_type: string;
   user: User;
 };
+
+export type Customer = {
+  id: string;
+  company_id: string;
+  name: string;
+  phone: string;
+  email: string;
+  source: string;
+  external_id: string;
+  created_at: string;
+};
+
+export type Conversation = {
+  id: string;
+  company_id: string;
+  customer_id: string;
+  channel: string;
+  status: string;
+  assigned_user_id: string | null;
+  created_at: string;
+  updated_at: string;
+  customer_name: string;
+};
+
+export type ConversationMessage = {
+  id: string;
+  conversation_id: string;
+  sender_type: string;
+  sender_id: string | null;
+  content: string;
+  structured_data: Record<string, unknown>;
+  created_at: string;
+  task_id?: string | null;
+};
+
+export type ConversationDetail = Conversation & {
+  messages: ConversationMessage[];
+};
+
+export type MessageSent = {
+  message: ConversationMessage;
+  task_id: string | null;
+};
