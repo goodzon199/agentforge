@@ -52,3 +52,15 @@ class MemoryType(str, enum.Enum):
 class ToolStatus(str, enum.Enum):
     enabled = "enabled"
     disabled = "disabled"
+
+
+class PartRequestStatus(str, enum.Enum):
+    """Lifecycle of a structured request for an auto part."""
+
+    collecting_data = "collecting_data"
+    ready_for_search = "ready_for_search"
+    searching = "searching"
+    quoted = "quoted"
+    approved = "approved"
+    completed = "completed"
+    cancelled = "cancelled"

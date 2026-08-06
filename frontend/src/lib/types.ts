@@ -137,3 +137,38 @@ export type MessageSent = {
   message: ConversationMessage;
   task_id: string | null;
 };
+
+export type Vehicle = {
+  id: string;
+  company_id: string;
+  customer_id: string;
+  vin: string;
+  brand: string;
+  model: string;
+  year: number | null;
+  engine: string;
+  body: string;
+  registration_number: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PartRequest = {
+  id: string;
+  company_id: string;
+  conversation_id: string;
+  customer_id: string;
+  vehicle_id: string | null;
+  source_message_id: string | null;
+  intent: string;
+  part_name: string;
+  article: string;
+  quantity: number;
+  status: string;
+  missing_fields: string[];
+  structured_data: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  vehicle: Vehicle | null;
+  customer_name: string;
+};

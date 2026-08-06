@@ -10,6 +10,14 @@ from app.llm.types import LLMMessage
 # Deterministic routing (used when no LLM provider is configured).
 _ROUTING_RULES: list[tuple[list[str], str]] = [
     (
+        ["process_customer_message"],
+        "IntakeAgent",
+    ),
+    (
+        ["search_parts"],
+        "SearchAgent",
+    ),
+    (
         ["найд", "поиск", "search", "подбер", "тормозн", "запчаст", "колод", "каталог", "артикул"],
         "SearchAgent",
     ),
@@ -18,6 +26,10 @@ _ROUTING_RULES: list[tuple[list[str], str]] = [
         "EmailAgent",
     ),
 ]
+
+# Internal pipeline objectives are always routed deterministically so the
+# vertical slice (message -> intake -> search) does not depend on LLM mood.
+_INTERNAL_OBJECTIVES = frozenset({"process_customer_message", "search_parts"})
 
 
 class SystemAgent(BaseAgent):
@@ -37,7 +49,9 @@ class SystemAgent(BaseAgent):
     def execute(self, objective: str, input_data: dict[str, Any]) -> AgentOutput:
         context = self.recall_context()
 
-        if self.llm.available:
+        if objective.strip().lower() in _INTERNAL_OBJECTIVES:
+            decision = self._route_deterministic(objective)
+        elif self.llm.available:
             decision = self._route_with_llm(objective, context)
         else:
             decision = self._route_deterministic(objective)
@@ -88,7 +102,8 @@ class SystemAgent(BaseAgent):
             "специализированный агент нужен для её выполнения. "
             "Отвечай строго в формате JSON: "
             '{"needs_agent": "<имя агента или null>", "reason": "<почему>", "answer": "<краткий ответ пользователю>"}. '
-            "Известные агенты: SearchAgent (поиск товаров/запчастей/информации), EmailAgent (отправка писем)."
+            "Известные агенты: IntakeAgent (обработка входящих сообщений клиентов и оформление заявок на запчасти), "
+            "SearchAgent (поиск товаров/запчастей/информации), EmailAgent (отправка писем)."
         )
         user_prompt = (
             f"Задача: {objective}\n"

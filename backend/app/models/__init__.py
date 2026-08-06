@@ -5,8 +5,10 @@ from app.models.conversation import Conversation
 from app.models.conversation_message import ConversationMessage
 from app.models.customer import Customer
 from app.models.memory import KnowledgeEntry, LongMemory, MemoryEntry, ShortMemory
+from app.models.part_request import PartRequest
 from app.models.task import Task, TaskEvent
 from app.models.user import User
+from app.models.vehicle import Vehicle
 
 __all__ = [
     "Base",
@@ -19,8 +21,10 @@ __all__ = [
     "KnowledgeEntry",
     "LongMemory",
     "MemoryEntry",
+    "PartRequest",
     "ShortMemory",
     "Task",
     "TaskEvent",
     "User",
+    "Vehicle",
 ]

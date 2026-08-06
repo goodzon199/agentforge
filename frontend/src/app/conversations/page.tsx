@@ -10,14 +10,17 @@ import type {
   ConversationMessage,
   Customer,
   MessageSent,
+  PartRequest,
 } from "@/lib/types";
 import { EmptyState, ErrorBox, Loading, SectionHeader, StatusBadge } from "@/components/ui";
+import { PartRequestPanel } from "@/components/conversations/PartRequestPanel";
 
 export default function ConversationsPage() {
   const { data: conversations, loading, error, reload, setData } = useApi<Conversation[]>("/conversations");
   const { data: companies } = useApi<Company[]>("/companies");
 
   const [selected, setSelected] = useState<ConversationDetail | null>(null);
+  const [partRequests, setPartRequests] = useState<PartRequest[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
 
@@ -33,14 +36,40 @@ export default function ConversationsPage() {
     if (companies && companies.length && !companyId) setCompanyId(companies[0].id);
   }, [companies, companyId]);
 
+  async function loadPartRequests(conversationId: string) {
+    try {
+      const requests = await api.get<PartRequest[]>(`/part_requests?conversation_id=${conversationId}`);
+      setPartRequests(requests);
+    } catch {
+      setPartRequests([]);
+    }
+  }
+
   async function selectConversation(id: string) {
     const detail = await api.get<ConversationDetail>(`/conversations/${id}`);
     setSelected(detail);
+    await loadPartRequests(id);
   }
 
   async function openConversation(c: Conversation) {
     await selectConversation(c.id);
   }
+
+  // Poll the open conversation so IntakeAgent replies and PartRequest
+  // updates appear without a manual refresh.
+  useEffect(() => {
+    if (!selected) return;
+    const timer = setInterval(async () => {
+      try {
+        const detail = await api.get<ConversationDetail>(`/conversations/${selected.id}`);
+        setSelected(detail);
+        await loadPartRequests(selected.id);
+      } catch {
+        // ignore transient errors
+      }
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [selected?.id]);
 
   async function sendMessage(e: React.FormEvent) {
     e.preventDefault();
@@ -58,6 +87,13 @@ export default function ConversationsPage() {
       });
       setDraft("");
       await reload();
+      await loadPartRequests(selected.id);
+      // In live mode IntakeAgent runs in a worker; catch up shortly after.
+      setTimeout(async () => {
+        const detail = await api.get<ConversationDetail>(`/conversations/${selected.id}`);
+        setSelected(detail);
+        await loadPartRequests(selected.id);
+      }, 1500);
     } finally {
       setSending(false);
     }
@@ -173,6 +209,10 @@ export default function ConversationsPage() {
                 <div className="text-xs text-slate-500">
                   Диалог · {selected.channel} · обновлён {new Date(selected.updated_at).toLocaleString("ru-RU")}
                 </div>
+              </div>
+
+              <div className="border-b border-surface-border px-5 py-3">
+                <PartRequestPanel partRequests={partRequests} />
               </div>
 
               <div className="flex-1 space-y-2 overflow-y-auto px-5 py-4">

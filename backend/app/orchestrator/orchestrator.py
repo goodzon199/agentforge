@@ -97,6 +97,7 @@ class Orchestrator:
                 memory=MemoryService(db),
                 tools=self.tools,
                 llm=self.llm,
+                db=db,
             )
 
             self._add_event(
@@ -132,6 +133,7 @@ class Orchestrator:
                     memory=MemoryService(db),
                     tools=self.tools,
                     llm=self.llm,
+                    db=db,
                 )
                 output = target.execute(task.objective, task.input_data or {})
                 target.remember(

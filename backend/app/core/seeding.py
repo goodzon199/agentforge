@@ -44,6 +44,17 @@ SEARCH_AGENT_INSTRUCTIONS = (
     "найдено — сообщаешь об этом пользователю."
 )
 
+INTAKE_AGENT_GOAL = (
+    "Обрабатывать входящие сообщения клиентов и превращать их в структурированные "
+    "заявки на запчасти (PartRequest)."
+)
+INTAKE_AGENT_INSTRUCTIONS = (
+    "Ты — IntakeAgent. Получаешь сообщение клиента из диалога, извлекаешь намерение, "
+    "автомобиль и деталь, возвращаешь строго валидную структуру IntakeResult. "
+    "Создаёшь и обновляешь PartRequest и Vehicle, задаёшь уточняющие вопросы, "
+    "при готовности передаёт заявку в поиск."
+)
+
 # Demo knowledge base for the search agent (auto-parts catalog samples).
 DEMO_KNOWLEDGE = [
     {
@@ -119,6 +130,7 @@ def seed_demo(db: Session) -> dict[str, object]:
         "system_agent": False,
         "email_agent": False,
         "search_agent": False,
+        "intake_agent": False,
         "knowledge": False,
         "admin": False,
     }
@@ -184,6 +196,21 @@ def seed_demo(db: Session) -> dict[str, object]:
         agent_type=AgentType.specialized,
         company_id=company.id,
         tool_names=["search"],
+    )
+
+    created["intake_agent"] = _ensure_agent(
+        db,
+        slug="intake-agent",
+        name="IntakeAgent",
+        role="Обработка входящих сообщений клиентов",
+        goal=INTAKE_AGENT_GOAL,
+        description=(
+            "Специализированный агент: превращает сообщение клиента в структурированную "
+            "заявку на запчасть (PartRequest), уточняет данные и передаёт заявку в поиск."
+        ),
+        instructions=INTAKE_AGENT_INSTRUCTIONS,
+        agent_type=AgentType.specialized,
+        company_id=company.id,
     )
 
     knowledge_count = db.scalars(

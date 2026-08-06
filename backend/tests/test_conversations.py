@@ -161,12 +161,16 @@ def test_list_messages(client, db_session):
     resp = client.get(f"/api/v1/conversations/{conversation_id}/messages")
     assert resp.status_code == 200
     messages = resp.json()
-    assert len(messages) == 2
+    # The customer message triggers IntakeAgent, which replies automatically.
     assert messages[0]["content"] == "привет"
-    assert messages[1]["content"] == "здравствуйте"
+    assert messages[0]["sender_type"] == "customer"
+    assert messages[-1]["content"] == "здравствуйте"
+    assert messages[-1]["sender_type"] == "agent"
 
     # Agent messages do not create processing tasks.
-    assert messages[1]["task_id"] is None
+    for message in messages:
+        if message["sender_type"] == "agent":
+            assert message["task_id"] is None
 
 
 def test_message_in_missing_conversation(client, db_session):
