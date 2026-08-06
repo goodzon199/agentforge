@@ -47,6 +47,18 @@ class Settings(BaseSettings):
     smtp_from: str = "agentforge@agentos.local"
     email_default_to: str = "demo@agentos.local"
 
+    # Auth (JWT)
+    # В production обязательно переопределите JWT_SECRET (>= 32 байта).
+    jwt_secret: str = "dev-only-agentforge-jwt-secret-change-me-9f3a1c"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 60 * 24 * 7  # 7 дней
+    jwt_issuer: str = "agentforge"
+
+    # Demo admin (создаётся при первом сидинге)
+    seed_admin_email: str = "admin@agentos.local"
+    seed_admin_password: str = "admin123"
+    seed_admin_name: str = "Администратор"
+
     @property
     def is_llm_available(self) -> bool:
         return bool(self.openai_api_key)

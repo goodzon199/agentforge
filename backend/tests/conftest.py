@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -31,18 +31,29 @@ def db_session():
 def client(db_session):
     from fastapi.testclient import TestClient
 
+    from app.api.deps import get_current_user
+    from app.core.config import settings
     from app.core.redis import redis_client
     from app.main import app
+    from app.models import User
 
     # Tests run synchronously: force the in-process path even if a real
     # Redis is reachable on localhost (e.g. the docker compose stack is up).
     saved_enabled = redis_client._enabled
     redis_client._enabled = False
 
+    admin = db_session.scalars(
+        select(User).where(User.email == settings.seed_admin_email)
+    ).first()
+
     def override_get_db():
         yield db_session
 
+    def override_get_current_user():
+        return admin
+
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_user] = override_get_current_user
     c = TestClient(app)
     yield c
     app.dependency_overrides.clear()

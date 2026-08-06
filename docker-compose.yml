@@ -80,6 +80,10 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-agentforge@agentos.local}
       EMAIL_DEFAULT_TO: ${EMAIL_DEFAULT_TO:-demo@agentos.local}
+      JWT_SECRET: ${JWT_SECRET:-dev-only-agentforge-jwt-secret-change-me-9f3a1c}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-10080}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@agentos.local}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-admin123}
       ENVIRONMENT: ${ENVIRONMENT:-development}
     volumes:
       - ./backend:/app

@@ -6,7 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models import Agent, AgentTool, Company, KnowledgeEntry
+from app.core.security import hash_password
+from app.models import Agent, AgentTool, Company, KnowledgeEntry, User
 from app.models.enums import AgentStatus, AgentType
 from app.orchestrator.orchestrator import SYSTEM_AGENT_SLUG
 
@@ -119,6 +120,7 @@ def seed_demo(db: Session) -> dict[str, object]:
         "email_agent": False,
         "search_agent": False,
         "knowledge": False,
+        "admin": False,
     }
 
     company = db.scalars(
@@ -199,6 +201,25 @@ def seed_demo(db: Session) -> dict[str, object]:
             )
         created["knowledge"] = True
         logger.info("Создана демо-база знаний (%d записей)", len(DEMO_KNOWLEDGE))
+
+    admin = db.scalars(
+        select(User).where(User.email == settings.seed_admin_email)
+    ).first()
+    if admin is None:
+        db.add(
+            User(
+                email=settings.seed_admin_email,
+                full_name=settings.seed_admin_name,
+                hashed_password=hash_password(settings.seed_admin_password),
+                is_superuser=True,
+                is_active=True,
+            )
+        )
+        created["admin"] = True
+        logger.info(
+            "Создан демо-администратор %s (пароль в .env: seed_admin_password)",
+            settings.seed_admin_email,
+        )
 
     db.commit()
     return created

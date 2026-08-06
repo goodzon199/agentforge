@@ -31,7 +31,9 @@ docker compose up --build
 - **MailHog** (входящие письма EmailAgent): http://localhost:8025
 - PostgreSQL: localhost:5432, Redis: localhost:6379
 
-Первый экран — **Обзор**: Компании / Агенты / Задачи / Логи / Настройки.
+Первый экран — **Вход**: админ по умолчанию `admin@agentos.local` / `admin123`
+(меняется через `SEED_ADMIN_*` в `.env`). После входа — Обзор: Компании / Агенты /
+Задачи / Логи / Настройки.
 
 ## Агенты
 
@@ -80,7 +82,7 @@ npm run dev                   # http://localhost:3000
 
 ```bash
 cd backend
-.venv\Scripts\python.exe -m pytest     # 25 тестов: агенты, оркестратор, API, память, email, поиск, эмбеддинги
+.venv\Scripts\python.exe -m pytest     # 32 теста: агенты, оркестратор, API, память, email, поиск, эмбеддинги, auth
 ```
 
 ## Структура
@@ -118,5 +120,6 @@ agentforge/
 | Инфра     | Docker Compose                                    |
 | LLM       | OpenAI (и совместимые: Azure, Ollama)             |
 | Поиск     | Ollama-эмбеддинги (nomic-embed-text) + vector search |
+| Auth      | JWT (HS256, PBKDF2-пароли)                        |
 
 Подробнее об архитектуре: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

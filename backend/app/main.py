@@ -30,9 +30,14 @@ def _init_database() -> None:
         with SessionLocal() as db:
             created = seed_demo(db)
             logger.info(
-                "База готова. Создано: компания=%s, SystemAgent=%s",
+                "База готова. Компания=%s, SystemAgent=%s, EmailAgent=%s, "
+                "SearchAgent=%s, знания=%s, админ=%s",
                 created["company"],
                 created["system_agent"],
+                created["email_agent"],
+                created["search_agent"],
+                created["knowledge"],
+                created["admin"],
             )
     except Exception:
         logger.exception(

@@ -1,7 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { api, clearToken, getToken } from "@/lib/api";
+import type { User } from "@/lib/types";
 
 const NAV = [
   { href: "/", label: "Обзор", icon: "M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z" },
@@ -14,6 +17,22 @@ const NAV = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+  const [user, setUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    if (!getToken()) return;
+    api
+      .get<User>("/auth/me")
+      .then(setUser)
+      .catch(() => undefined);
+  }, []);
+
+  function logout() {
+    clearToken();
+    router.replace("/login");
+    router.refresh();
+  }
 
   return (
     <aside className="flex h-full w-60 flex-col border-r border-surface-border bg-surface-raised/60">
@@ -50,10 +69,27 @@ export function Sidebar() {
       </nav>
 
       <div className="border-t border-surface-border px-5 py-4">
-        <div className="flex items-center gap-2">
+        <div className="mb-3 flex items-center gap-2">
           <span className="h-2 w-2 rounded-full bg-emerald-400" />
           <span className="text-xs text-slate-500">Платформа работает</span>
         </div>
+        {user ? (
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <div className="truncate text-xs font-medium text-slate-300">
+                {user.full_name || user.email}
+              </div>
+              <div className="truncate text-[11px] text-slate-600">{user.email}</div>
+            </div>
+            <button
+              onClick={logout}
+              className="shrink-0 rounded-md px-2 py-1 text-[11px] text-slate-400 transition hover:bg-surface-hover hover:text-rose-300"
+              title="Выйти"
+            >
+              Выйти
+            </button>
+          </div>
+        ) : null}
       </div>
     </aside>
   );

@@ -145,6 +145,18 @@ MemoryService собирает контекст агента через `build_c
 - `providers/openai_provider.py` — OpenAI / Azure / Ollama через единый `/v1`.
 - Маршрутизация SystemAgent: JSON-классификация `{needs_agent, reason, answer}`.
 
+## Авторизация (JWT)
+
+- `POST /api/v1/auth/login` (email+password) → `{access_token, user}`.
+- `GET /api/v1/auth/me` — текущий пользователь (Bearer-токен).
+- Пароли: PBKDF2-HMAC-SHA256 (100k итераций, соль на пользователя) — `app/core/security.py`.
+- Токены: PyJWT, HS256, claims `sub/iss/iat/exp`; `JWT_SECRET` обязателен в production.
+- Все ресурсные роутеры `/api/v1/*` защищены зависимостью `get_current_user`
+  (`app/api/deps.py`); открыты `/health`, `/` и `/auth/login`.
+- Демо-админ сидится автоматически (`SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD`).
+- Frontend: страница `/login`, токен в localStorage, Bearer-заголовок в `api.ts`,
+  guard в `AppShell`, logout в сайдбаре.
+
 ## Миграции (Alembic)
 
 Dev-бутстрап: `Base.metadata.create_all()` при старте (см. `app/main.py`).
@@ -164,5 +176,5 @@ alembic upgrade head
   Rossko/Armtek, веб-поиск) через `search_tool`/`http_tool`.
 - **Эмбеддинги** — переход на pgvector/Milvus при росте базы знаний.
 - **EmailAgent** — расширение: шаблоны писем, вложения, несколько SMTP-профилей.
-- Авторизация: JWT, пользователи, права компаний.
+- **RBAC** — роли и права компаний (сейчас superuser/обычный), разграничение данных.
 - Метрики и дашборд «цифровой штат».
