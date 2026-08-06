@@ -5,7 +5,8 @@
 памятью, инструментами, правами, моделью и статистикой.
 
 > Sprint 1 — Foundation: запускаемая платформа. Уже работают SystemAgent (роутер),
-> EmailAgent (реальная отправка писем через MailHog) и передача задач между агентами.
+> EmailAgent (реальная отправка писем через MailHog), SearchAgent (поиск по базе
+> знаний) и передача задач между агентами.
 
 ---
 
@@ -41,10 +42,13 @@ docker compose up --build
 - **EmailAgent** — специалист по почте: принимает задачу от SystemAgent,
   достаёт получателя/тему/текст и отправляет письмо по SMTP (в демо — MailHog,
   UI на http://localhost:8025). Получателя можно указать в поле «Кому (email)».
+- **SearchAgent** — специалист по поиску: ищет по базе знаний компании
+  (демо-каталог запчастей). Внешние каталоги подключаются позже.
 
 ```
 Задача: "Найди тормозные колодки"
-Ответ:  "Для выполнения этой задачи нужен SearchAgent."
+Ответ:  "По запросу «тормозные колодки» найдено записей: 1
+          • Тормозные колодки TRW GDB3410 (передние) — ..."
 
 Задача: "Отправь письмо клиенту: напомни про встречу завтра в 10:00"
 Письмо:  SystemAgent -> EmailAgent -> SMTP/MailHog -> http://localhost:8025
@@ -75,7 +79,7 @@ npm run dev                   # http://localhost:3000
 
 ```bash
 cd backend
-.venv\Scripts\python.exe -m pytest     # 17 тестов: агенты, оркестратор, API, память, email
+.venv\Scripts\python.exe -m pytest     # 21 тест: агенты, оркестратор, API, память, email, поиск
 ```
 
 ## Структура
@@ -86,7 +90,7 @@ agentforge/
 │   ├── app/
 │   │   ├── api/v1/        # REST API: companies, agents, tasks, logs, settings, dashboard
 │   │   ├── core/          # config, database, redis, seeding
-│   │   ├── agents/        # BaseAgent, SystemAgent, EmailAgent, реестр агентов
+│   │   ├── agents/        # BaseAgent, SystemAgent, EmailAgent, SearchAgent, реестр
 │   │   ├── orchestrator/  # сердце платформы: маршрутизация, handoff, очередь, воркеры
 │   │   ├── tools/         # каждый инструмент — отдельный модуль (email, search, http)
 │   │   ├── models/        # Agent (цифровой сотрудник), Company, Task, Memory

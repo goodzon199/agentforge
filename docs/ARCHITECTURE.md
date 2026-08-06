@@ -64,6 +64,10 @@ Orchestrator.process(task)
 - **EmailAgent** (`email-agent`) — принимает задачу после handoff, извлекает
   `to`/`subject`/`body` из `input_data` (fallback: `EMAIL_DEFAULT_TO`, objective)
   и отправляет письмо через `email_tool`.
+- **SearchAgent** (`search-agent`) — ищет по базе знаний компании
+  (`KnowledgeEntry`): извлекает запрос из задачи (`extract_query`) и делает
+  case-insensitive-матч по title/content/tags. Пусто → ответ «ничего не найдено».
+  Внешние каталоги (Rossko, Armtek и т.п.) подключаются через `search_tool`.
 
 Маршрутизация SystemAgent по handoff-имени в тип агента — в `agents/registry.py`
 (`HANDOFF_TO_TYPE`), слот для записи в БД — slug `<type>-agent`.
@@ -105,8 +109,8 @@ MemoryService собирает контекст агента через `build_c
 - `email_tool.py` — реальная отправка по SMTP (`smtplib`, MIME multipart,
   версия 2.0.0). В демо-стеке `SMTP_HOST=mailhog` — письма видны в UI :8025.
   При ошибке SMTP возвращает `ToolResult(ok=False, error=...)`, агент не падает.
-- `search_tool.py` — контракт поиска (query/filters/limit). В Sprint 1 возвращает
-  сигнал `handoff_required: SearchAgent`.
+- `search_tool.py` — контракт поиска (query/filters/limit). Провайдер
+  подключается позже; сейчас SearchAgent ищет по базе знаний напрямую.
 - `http_tool.py` — общий HTTP-контракт для внешних API (Rossko, Armtek, CRM и др.).
 
 Добавление инструмента = новый класс в `builtin/` + регистрация в `ToolRegistry`.
@@ -143,7 +147,8 @@ alembic upgrade head
 
 ## Планы (Sprint 2+)
 
-- **SearchAgent** — реализация агента поиска (маршрутизация и слот в реестре готовы).
+- **SearchAgent** — подключение реального поискового провайдера (каталог запчастей
+  Rossko/Armtek, веб-поиск) через `search_tool`/`http_tool`.
 - **EmailAgent** — расширение: шаблоны писем, вложения, несколько SMTP-профилей.
 - Эмбеддинги + векторный поиск по Knowledge Base.
 - Авторизация: JWT, пользователи, права компаний.

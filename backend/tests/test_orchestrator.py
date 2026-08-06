@@ -21,9 +21,11 @@ def test_orchestrator_processes_task(db_session):
     db_session.refresh(task)
 
     assert task.status.value == "completed"
-    assert task.routing_decision["needs_agent"] == "SearchAgent"
-    assert task.output_data["response"] == "Для выполнения этой задачи нужен SearchAgent."
-    assert len(task.events) >= 2
+    assert task.output_data["data"]["action"] == "search_done"
+    assert task.output_data["data"]["found"] is True
+    assert "TRW" in task.output_data["response"]
+    messages = [e.message for e in task.events]
+    assert any("передал задачу агенту SearchAgent" in m for m in messages)
 
 
 def test_orchestrator_handoff_email_and_completes(db_session):

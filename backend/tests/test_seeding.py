@@ -35,3 +35,23 @@ def test_seed_creates_email_agent_with_tool(db_session):
     ).first()
     assert tool is not None
     assert tool.tool_name == "email"
+
+
+def test_seed_creates_search_agent_and_knowledge(db_session):
+    from app.models import AgentTool, KnowledgeEntry
+
+    agent = db_session.scalars(
+        select(Agent).where(Agent.slug == "search-agent")
+    ).first()
+    assert agent is not None
+    assert agent.name == "SearchAgent"
+
+    tool = db_session.scalars(
+        select(AgentTool).where(AgentTool.agent_id == agent.id)
+    ).first()
+    assert tool is not None
+    assert tool.tool_name == "search"
+
+    entries = db_session.scalars(select(KnowledgeEntry)).all()
+    assert len(entries) == 3
+    assert any("Тормозные" in e.title for e in entries)

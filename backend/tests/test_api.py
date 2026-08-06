@@ -11,7 +11,7 @@ def test_dashboard(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["companies"] == 1
-    assert data["agents"] == 2
+    assert data["agents"] == 3
 
 
 def test_create_and_run_task_via_api(client):
@@ -30,7 +30,8 @@ def test_create_and_run_task_via_api(client):
     assert resp.status_code == 201
     task = resp.json()
     assert task["status"] == "completed"
-    assert task["routing_decision"]["needs_agent"] == "SearchAgent"
+    assert task["output_data"]["data"]["action"] == "search_done"
+    assert task["output_data"]["data"]["found"] is True
     assert len(task["events"]) >= 2
 
 

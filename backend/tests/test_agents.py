@@ -128,3 +128,52 @@ def test_email_agent_falls_back_to_default_recipient(db_session):
     output = agent.execute("Отправь письмо о встрече", {})
     assert output.data["to"] == settings.email_default_to
     assert "встрече" in output.data["subject"]
+
+
+def test_search_agent_finds_knowledge(db_session):
+    from sqlalchemy import select
+
+    from app.agents.search import SearchAgent
+
+    record = db_session.scalars(
+        select(Agent).where(Agent.slug == "search-agent")
+    ).first()
+    agent = SearchAgent(
+        record=record,
+        memory=MemoryService(db_session),
+        tools=ToolRegistry(),
+        llm=LLMClient(),
+    )
+    output = agent.execute("Найди тормозные колодки", {})
+    assert output.data["action"] == "search_done"
+    assert output.data["found"] is True
+    assert any("TRW" in r["title"] for r in output.data["results"])
+    assert "колодки" in output.data["results"][0]["title"].lower()
+
+
+def test_search_agent_returns_not_found(db_session):
+    from sqlalchemy import select
+
+    from app.agents.search import SearchAgent
+
+    record = db_session.scalars(
+        select(Agent).where(Agent.slug == "search-agent")
+    ).first()
+    agent = SearchAgent(
+        record=record,
+        memory=MemoryService(db_session),
+        tools=ToolRegistry(),
+        llm=LLMClient(),
+    )
+    output = agent.execute("Найди глушитель для Volvo FH", {})
+    assert output.data["found"] is False
+    assert "ничего не найдено" in output.response
+
+
+def test_search_query_extraction():
+    from app.agents.search import extract_query
+
+    assert extract_query("Найди тормозные колодки", {}) == "тормозные колодки"
+    assert extract_query("Поищи масло Castrol", {}) == "масло Castrol"
+    assert extract_query("тормозные колодки", {}) == "тормозные колодки"
+    assert extract_query("x", {"query": "масляный фильтр"}) == "масляный фильтр"

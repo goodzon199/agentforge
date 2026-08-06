@@ -2,16 +2,19 @@ from __future__ import annotations
 
 from app.agents.base import BaseAgent
 from app.agents.email import EmailAgent
+from app.agents.search import SearchAgent
 from app.agents.system import SystemAgent
 
 _AGENT_CLASSES: dict[str, type[BaseAgent]] = {
     "system": SystemAgent,
     "email": EmailAgent,
+    "search": SearchAgent,
 }
 
 # Map SystemAgent handoff names to agent types/slugs.
 HANDOFF_TO_TYPE: dict[str, str] = {
     "EmailAgent": "email",
+    "SearchAgent": "search",
 }
 
 
