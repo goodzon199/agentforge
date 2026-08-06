@@ -64,3 +64,26 @@ class PartRequestStatus(str, enum.Enum):
     approved = "approved"
     completed = "completed"
     cancelled = "cancelled"
+
+
+class SupplierType(str, enum.Enum):
+    """Adapter backend behind a supplier (mock / CSV feed)."""
+
+    mock = "mock"
+    csv = "csv"
+
+
+class SupplierSearchStatus(str, enum.Enum):
+    """Lifecycle of one parts-search run for a part request."""
+
+    running = "running"
+    completed = "completed"
+    failed = "failed"
+
+
+class SupplierAttemptStatus(str, enum.Enum):
+    """Outcome of calling a single supplier adapter during a search run."""
+
+    pending = "pending"
+    succeeded = "succeeded"
+    failed = "failed"

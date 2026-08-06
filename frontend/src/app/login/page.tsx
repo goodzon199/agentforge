@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, setToken, TOKEN_KEY } from "@/lib/api";
+import { api, setToken, TOKEN_KEY, USER_KEY } from "@/lib/api";
 import type { LoginResponse } from "@/lib/types";
 
 export default function LoginPage() {
@@ -19,6 +19,7 @@ export default function LoginPage() {
     try {
       const res = await api.post<LoginResponse>("/auth/login", { email, password });
       setToken(res.access_token);
+      window.localStorage.setItem(USER_KEY, JSON.stringify(res.user));
       router.replace("/");
       router.refresh();
     } catch (err) {

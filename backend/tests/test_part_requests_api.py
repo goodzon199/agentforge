@@ -63,17 +63,17 @@ def test_full_flow_dod(client, db_session):
     )
     assert second.status_code == 201
 
-    # 4. The same PartRequest is updated and becomes ready for search.
+    # 4. The same PartRequest is updated, auto-searched and now has offers.
     requests = client.get(
         f"/api/v1/part_requests?conversation_id={conversation_id}"
     ).json()
     assert len(requests) == 1  # updated, not duplicated
     part_request = requests[0]
-    assert part_request["status"] == "ready_for_search"
+    assert part_request["status"] == "quoted"
     assert part_request["vehicle"]["vin"] == "WBAKS410900H12345"
     assert part_request["missing_fields"] == []
 
-    # 5. A search_parts task has been created with the part_request_id.
+    # 5. A search_parts task was created and completed with offers.
     tasks = client.get("/api/v1/tasks").json()
     search_tasks = [
         t
@@ -82,6 +82,16 @@ def test_full_flow_dod(client, db_session):
         and t["input_data"].get("part_request_id") == part_request["id"]
     ]
     assert len(search_tasks) == 1
+    assert search_tasks[0]["status"] == "completed"
+    assert search_tasks[0]["output_data"]["data"]["offers_found"] == 2
+    assert (
+        search_tasks[0]["output_data"]["data"]["next_action"] == "pricing_parts"
+    )
+
+    # 6. Offers are persisted and visible via the offers endpoint.
+    offers = client.get(f"/api/v1/part_requests/{part_request['id']}/offers").json()
+    assert len(offers) == 2
+    assert {o["article"] for o in offers} == {"P06089", "GDB2119"}
 
 
 def test_reprocessing_message_does_not_duplicate(client, db_session):

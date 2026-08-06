@@ -11,9 +11,19 @@ import type {
   Customer,
   MessageSent,
   PartRequest,
+  SupplierOffer,
+  SupplierSearchRun,
 } from "@/lib/types";
 import { EmptyState, ErrorBox, Loading, SectionHeader, StatusBadge } from "@/components/ui";
 import { PartRequestPanel } from "@/components/conversations/PartRequestPanel";
+
+const ACTIVE_STATUSES = ["collecting_data", "ready_for_search", "searching", "quoted"];
+
+function activePartRequest(partRequests: PartRequest[]): PartRequest | undefined {
+  return (
+    partRequests.find((pr) => ACTIVE_STATUSES.includes(pr.status)) ?? partRequests[0]
+  );
+}
 
 export default function ConversationsPage() {
   const { data: conversations, loading, error, reload, setData } = useApi<Conversation[]>("/conversations");
@@ -21,6 +31,9 @@ export default function ConversationsPage() {
 
   const [selected, setSelected] = useState<ConversationDetail | null>(null);
   const [partRequests, setPartRequests] = useState<PartRequest[]>([]);
+  const [offers, setOffers] = useState<SupplierOffer[]>([]);
+  const [searchRuns, setSearchRuns] = useState<SupplierSearchRun[]>([]);
+  const [searching, setSearching] = useState(false);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
 
@@ -36,12 +49,44 @@ export default function ConversationsPage() {
     if (companies && companies.length && !companyId) setCompanyId(companies[0].id);
   }, [companies, companyId]);
 
+  async function loadSearchData(requests: PartRequest[]) {
+    const active = activePartRequest(requests);
+    if (!active) {
+      setOffers([]);
+      setSearchRuns([]);
+      return;
+    }
+    try {
+      const [loadedOffers, loadedRuns] = await Promise.all([
+        api.get<SupplierOffer[]>(`/part_requests/${active.id}/offers`),
+        api.get<SupplierSearchRun[]>(`/part_requests/${active.id}/search-runs`),
+      ]);
+      setOffers(loadedOffers);
+      setSearchRuns(loadedRuns);
+    } catch {
+      setOffers([]);
+      setSearchRuns([]);
+    }
+  }
+
   async function loadPartRequests(conversationId: string) {
     try {
       const requests = await api.get<PartRequest[]>(`/part_requests?conversation_id=${conversationId}`);
       setPartRequests(requests);
+      await loadSearchData(requests);
     } catch {
       setPartRequests([]);
+    }
+  }
+
+  async function runSearch(partRequestId: string) {
+    if (searching) return;
+    setSearching(true);
+    try {
+      await api.post(`/part_requests/${partRequestId}/search`, {});
+      await loadPartRequests(selected!.id);
+    } finally {
+      setSearching(false);
     }
   }
 
@@ -212,7 +257,13 @@ export default function ConversationsPage() {
               </div>
 
               <div className="border-b border-surface-border px-5 py-3">
-                <PartRequestPanel partRequests={partRequests} />
+                <PartRequestPanel
+                  partRequests={partRequests}
+                  offers={offers}
+                  searchRuns={searchRuns}
+                  searching={searching}
+                  onSearch={runSearch}
+                />
               </div>
 
               <div className="flex-1 space-y-2 overflow-y-auto px-5 py-4">

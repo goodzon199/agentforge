@@ -39,6 +39,9 @@ class Settings(BaseSettings):
     orchestrator_workers: int = 4
     task_queue_name: str = "agentos:tasks"
 
+    # Supplier search (sprint 2.3)
+    supplier_search_timeout: float = 15.0
+
     # E-mail (SMTP)
     smtp_host: str = ""
     smtp_port: int = 1025

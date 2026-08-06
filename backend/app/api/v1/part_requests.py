@@ -4,13 +4,69 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import get_part_request_service
+from app.api.deps import get_part_request_service, get_parts_search_service
 from app.models import PartRequest
 from app.models.enums import PartRequestStatus
-from app.schemas.part_request import PartRequestRead, PartRequestUpdate
+from app.schemas.part_request import (
+    PartRequestRead,
+    PartRequestUpdate,
+    PartSearchResult,
+    SupplierAttemptRead,
+    SupplierOfferRead,
+    SupplierSearchRunRead,
+)
 from app.services.part_request_service import PartRequestService
+from app.services.parts_search_service import PartsSearchService
 
 router = APIRouter(prefix="/part_requests", tags=["part_requests"])
+
+
+def _offer_read(offer) -> SupplierOfferRead:
+    return SupplierOfferRead(
+        id=offer.id,
+        part_request_id=offer.part_request_id,
+        search_run_id=offer.search_run_id,
+        supplier_id=offer.supplier_id,
+        supplier_name=offer.supplier.name if offer.supplier else "",
+        brand=offer.brand,
+        article=offer.article,
+        part_name=offer.part_name,
+        purchase_price=offer.purchase_price,
+        quantity=offer.quantity,
+        delivery_days=offer.delivery_days,
+        created_at=offer.created_at,
+    )
+
+
+def _attempt_read(attempt) -> SupplierAttemptRead:
+    return SupplierAttemptRead(
+        id=attempt.id,
+        supplier_id=attempt.supplier_id,
+        supplier_name=attempt.supplier.name if attempt.supplier else "",
+        status=attempt.status.value,
+        offers_found=attempt.offers_found,
+        error=attempt.error,
+        latency_ms=attempt.latency_ms,
+        started_at=attempt.started_at,
+        completed_at=attempt.completed_at,
+    )
+
+
+def _run_read(run) -> SupplierSearchRunRead:
+    return SupplierSearchRunRead(
+        id=run.id,
+        part_request_id=run.part_request_id,
+        status=run.status.value,
+        offers_found=run.offers_found,
+        suppliers_succeeded=run.suppliers_succeeded,
+        suppliers_failed=run.suppliers_failed,
+        error=run.error,
+        structured_data=run.structured_data,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        created_at=run.created_at,
+        attempts=[_attempt_read(a) for a in run.attempts],
+    )
 
 
 def _read(part_request: PartRequest) -> PartRequestRead:
@@ -91,3 +147,41 @@ def update_part_request(
     service.db.commit()
     service.db.refresh(part_request)
     return _read(part_request)
+
+
+# --- Supplier search --------------------------------------------------------
+
+
+@router.get("/{part_request_id}/offers", response_model=list[SupplierOfferRead])
+def list_offers(
+    part_request_id: uuid.UUID,
+    service: PartsSearchService = Depends(get_parts_search_service),
+):
+    if service.db.get(PartRequest, part_request_id) is None:
+        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    return [_offer_read(o) for o in service.list_offers(part_request_id)]
+
+
+@router.post("/{part_request_id}/search", response_model=PartSearchResult)
+def run_search(
+    part_request_id: uuid.UUID,
+    part_service: PartRequestService = Depends(get_part_request_service),
+    search_service: PartsSearchService = Depends(get_parts_search_service),
+):
+    part_request = part_service.get(part_request_id)
+    if part_request is None:
+        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    result = search_service.search(part_request, triggered_by="user")
+    return PartSearchResult(**result)
+
+
+@router.get(
+    "/{part_request_id}/search-runs", response_model=list[SupplierSearchRunRead]
+)
+def list_search_runs(
+    part_request_id: uuid.UUID,
+    service: PartsSearchService = Depends(get_parts_search_service),
+):
+    if service.db.get(PartRequest, part_request_id) is None:
+        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    return [_run_read(r) for r in service.list_runs(part_request_id)]

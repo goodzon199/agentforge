@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.security import hash_password
-from app.models import Agent, AgentTool, Company, KnowledgeEntry, User
+from app.models import Agent, AgentTool, Company, KnowledgeEntry, Supplier, User
 from app.models.enums import AgentStatus, AgentType
 from app.orchestrator.orchestrator import SYSTEM_AGENT_SLUG
 
@@ -54,6 +54,17 @@ INTAKE_AGENT_INSTRUCTIONS = (
     "Создаёшь и обновляешь PartRequest и Vehicle, задаёшь уточняющие вопросы, "
     "при готовности передаёт заявку в поиск."
 )
+
+# Demo supplier backend for the parts pipeline (mock, deterministic).
+DEMO_SUPPLIERS = [
+    {
+        "name": "АвтоТорг (демо)",
+        "slug": "auto-torg-demo",
+        "adapter_type": "mock",
+        "is_active": True,
+        "settings": {},
+    },
+]
 
 # Demo knowledge base for the search agent (auto-parts catalog samples).
 DEMO_KNOWLEDGE = [
@@ -132,6 +143,7 @@ def seed_demo(db: Session) -> dict[str, object]:
         "search_agent": False,
         "intake_agent": False,
         "knowledge": False,
+        "suppliers": False,
         "admin": False,
     }
 
@@ -228,6 +240,24 @@ def seed_demo(db: Session) -> dict[str, object]:
             )
         created["knowledge"] = True
         logger.info("Создана демо-база знаний (%d записей)", len(DEMO_KNOWLEDGE))
+
+    supplier_count = db.scalars(
+        select(Supplier).where(Supplier.company_id == company.id)
+    ).all()
+    if not supplier_count:
+        for item in DEMO_SUPPLIERS:
+            db.add(
+                Supplier(
+                    company_id=company.id,
+                    name=item["name"],
+                    slug=item["slug"],
+                    adapter_type=item["adapter_type"],
+                    is_active=item["is_active"],
+                    settings=item["settings"],
+                )
+            )
+        created["suppliers"] = True
+        logger.info("Созданы демо-поставщики (%d)", len(DEMO_SUPPLIERS))
 
     admin = db.scalars(
         select(User).where(User.email == settings.seed_admin_email)

@@ -1,6 +1,7 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
 
 export const TOKEN_KEY = "agentforge_token";
+export const USER_KEY = "agentforge_user";
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -13,6 +14,18 @@ export function setToken(token: string) {
 
 export function clearToken() {
   window.localStorage.removeItem(TOKEN_KEY);
+  window.localStorage.removeItem(USER_KEY);
+}
+
+export function getStoredUser<T = { is_superuser?: boolean }>(): T | null {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem(USER_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

@@ -11,6 +11,8 @@ from app.services.agent_service import AgentService
 from app.services.company_service import CompanyService
 from app.services.conversation_service import ConversationService
 from app.services.part_request_service import PartRequestService
+from app.services.parts_search_service import PartsSearchService
+from app.services.supplier_service import SupplierService
 from app.services.task_service import TaskService
 from app.services.user_service import UserService
 
@@ -35,6 +37,14 @@ def get_conversation_service(db: Session = Depends(get_db)) -> ConversationServi
 
 def get_part_request_service(db: Session = Depends(get_db)) -> PartRequestService:
     return PartRequestService(db)
+
+
+def get_parts_search_service(db: Session = Depends(get_db)) -> PartsSearchService:
+    return PartsSearchService(db)
+
+
+def get_supplier_service(db: Session = Depends(get_db)) -> SupplierService:
+    return SupplierService(db)
 
 
 def get_user_service(db: Session = Depends(get_db)) -> UserService:

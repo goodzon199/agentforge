@@ -7,6 +7,62 @@
 > Sprint 1 — Foundation: запускаемая платформа. Уже работают SystemAgent (роутер),
 > EmailAgent (реальная отправка писем через MailHog), SearchAgent (поиск по базе
 > знаний) и передача задач между агентами.
+>
+> Sprint 2 (часть 1) — Диалоги: домен Customer/Conversation/ConversationMessage,
+> REST API `/customers`, `/conversations`, `/messages` и автосоздание задачи
+> `process_customer_message` при входящем сообщении клиента. UI: раздел «Диалоги».
+>
+> Sprint 2 (часть 2) — Intake: домен Vehicle/PartRequest, IntakeAgent
+> (LLM + валидация + fallback на правила), REST API `/part_requests`,
+> панель заявки в разделе «Диалоги».
+>
+> Sprint 2 (часть 3) — Поставщики: адаптеры `mock`/`csv`, `SupplierRegistry`,
+> `PartsSearchService` (параллельный поиск, таймауты, дедуп), сущности
+> `Supplier`, `SupplierOffer`, `SupplierSearchRun`, `SupplierSearchAttempt`,
+> API `/suppliers` и `/part_requests/{id}/offers|search|search-runs`,
+> таблица предложений в UI, handoff-задача `pricing_parts`.
+
+---
+
+## Что сделано (по порядку, последнее сверху)
+
+1. **feat/supplier-adapters** — вертикальный срез «поиск предложений»:
+   - Адаптеры поставщиков: `MockSupplierAdapter` (стабильный каталог BREMBO P06089 /
+     TRW GDB2119) и `CsvSupplierAdapter` (маппинг колонок через конфиг
+     `{delimiter, encoding, columns}`), `normalize_article()` (только isalnum, верхний регистр),
+     `SupplierRegistry.create(type, settings)`.
+   - `PartsSearchService`: параллельный вызов адаптеров через `asyncio.gather`,
+     таймаут на поставщика, дедуп по (поставщик, артикул) с выбором дешёвого,
+     ошибка одного поставщика не ломает весь поиск; сохраняет `SupplierSearchRun`
+     + `SupplierSearchAttempt` (повторный поиск — новая run, история не удаляется).
+   - `SearchAgent` — тонкий координатор: для задачи `search_parts` запускает поиск
+     по активным поставщикам и создаёт handoff-задачу `pricing_parts`.
+   - REST API под JWT: `GET/POST /suppliers`, `PATCH /suppliers/{id}`,
+     `POST /suppliers/{id}/test`, `GET /part_requests/{id}/offers`,
+     `POST /part_requests/{id}/search`, `GET /part_requests/{id}/search-runs`.
+   - Frontend: кнопка «Найти предложения», счётчики, таблица Бренд/Артикул/Название/
+     Закупка/Наличие/Срок/Поставщик (колонка «Закупка» — только для менеджера).
+   - Alembic-миграция `c37f28d9a4b1`, застамплена в live-БД; демо-поставщик
+     «АвтоТорг (демо)» (mock) создаётся при сидинге.
+   - Тесты 99/99: адаптеры (8), PartsSearchService (11), suppliers API (13),
+     DoD-сценарий целиком (диалог → VIN → поиск → предложения).
+2. **feat/conversations-domain** (`336eb00`) — домен диалогов:
+   - Модели `Customer`, `Conversation`, `ConversationMessage` (SQLAlchemy 2, UUID + timestamps).
+   - Pydantic-схемы: CustomerCreate/Read, ConversationCreate/Read/Detail, MessageCreate/Read, MessageSent.
+   - Сервис `ConversationService` + автосоздание задачи `process_customer_message`
+     (в `input_data` — `conversation_id`, `message_id`).
+   - REST API под JWT: `POST/GET /api/v1/customers`, `POST/GET /api/v1/conversations`,
+     `GET /api/v1/conversations/{id}`, `POST/GET .../messages`.
+   - Alembic-миграция `f4e7291ad0aa` (create_table ×3 + индексы, `down_revision=None`), застамплена в live-БД.
+   - Frontend: типы в `types.ts`, двухпанельная страница `/conversations` (список +
+     переписка с отправкой сообщения), пункт «Диалоги» в сайдбаре.
+   - Live-проверка API: customer → conversation → message (201), возвращается `task_id`,
+     задача видна в `/tasks`.
+3. **3af4800** — JWT auth: логин/me, защищённое v1 API, sign-in на фронтенде.
+4. **14881d6** — векторный поиск: Ollama-эмбеддинги по базе знаний.
+5. **f612045** — SearchAgent: поиск по базе знаний, демо-каталог запчастей, handoff.
+6. **770a02d** — Sprint 2 (Email): EmailAgent, реальный SMTP через MailHog, handoff-роутинг.
+7. **e5444ff** — Sprint 1 polish: локальная Ollama-LLM, устойчивая маршрутизация, фиксы Docker.
 
 ---
 
@@ -33,7 +89,8 @@ docker compose up --build
 
 Первый экран — **Вход**: админ по умолчанию `admin@agentos.local` / `admin123`
 (меняется через `SEED_ADMIN_*` в `.env`). После входа — Обзор: Компании / Агенты /
-Задачи / Логи / Настройки.
+Задачи / Логи / Настройки. Раздел **Диалоги** — клиенты и переписка: из UI можно
+создать клиента и диалог, написать сообщение — в ответ создастся задача обработки.
 
 ## Агенты
 
@@ -82,7 +139,7 @@ npm run dev                   # http://localhost:3000
 
 ```bash
 cd backend
-.venv\Scripts\python.exe -m pytest     # 32 теста: агенты, оркестратор, API, память, email, поиск, эмбеддинги, auth
+.venv\Scripts\python.exe -m pytest     # 99 тестов: агенты, оркестратор, API, память, email, поиск, эмбеддинги, auth, диалоги, intake, поставщики
 ```
 
 ## Структура
@@ -91,13 +148,14 @@ cd backend
 agentforge/
 ├── backend/
 │   ├── app/
-│   │   ├── api/v1/        # REST API: companies, agents, tasks, logs, settings, dashboard
+│   │   ├── api/v1/        # REST API: companies, agents, tasks, logs, settings, dashboard, customers, conversations, part_requests, suppliers
 │   │   ├── core/          # config, database, redis, seeding
-│   │   ├── agents/        # BaseAgent, SystemAgent, EmailAgent, SearchAgent, реестр
+│   │   ├── agents/        # BaseAgent, SystemAgent, EmailAgent, SearchAgent, IntakeAgent, реестр
 │   │   ├── orchestrator/  # сердце платформы: маршрутизация, handoff, очередь, воркеры
 │   │   ├── tools/         # каждый инструмент — отдельный модуль (email, search, http)
-│   │   ├── models/        # Agent (цифровой сотрудник), Company, Task, Memory
-│   │   ├── services/      # сервисный слой
+│   │   ├── suppliers/     # адаптеры поставщиков: base, mock, csv, normalize, registry
+│   │   ├── models/        # Agent, Company, Task, Memory, Customer, Conversation, PartRequest, Supplier, SupplierOffer, SupplierSearch*
+│   │   ├── services/      # сервисный слой (в т.ч. PartsSearchService, SupplierService)
 │   │   ├── memory/        # Short / Long / Knowledge Base
 │   │   ├── llm/           # провайдеры LLM (OpenAI-совместимые)
 │   │   └── main.py

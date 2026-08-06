@@ -172,3 +172,57 @@ export type PartRequest = {
   vehicle: Vehicle | null;
   customer_name: string;
 };
+
+export type Supplier = {
+  id: string;
+  company_id: string;
+  name: string;
+  slug: string;
+  adapter_type: string;
+  is_active: boolean;
+  settings: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SupplierOffer = {
+  id: string;
+  part_request_id: string;
+  search_run_id: string;
+  supplier_id: string;
+  supplier_name: string;
+  brand: string;
+  article: string;
+  part_name: string;
+  purchase_price: string | null;
+  quantity: number | null;
+  delivery_days: number | null;
+  created_at: string;
+};
+
+export type SupplierAttempt = {
+  id: string;
+  supplier_id: string;
+  supplier_name: string;
+  status: string;
+  offers_found: number;
+  error: string;
+  latency_ms: number | null;
+  started_at: string | null;
+  completed_at: string | null;
+};
+
+export type SupplierSearchRun = {
+  id: string;
+  part_request_id: string;
+  status: string;
+  offers_found: number;
+  suppliers_succeeded: number;
+  suppliers_failed: number;
+  error: string;
+  structured_data: Record<string, unknown>;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  attempts: SupplierAttempt[];
+};
