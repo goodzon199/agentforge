@@ -52,7 +52,7 @@ services:
       OLLAMA_KEEP_ALIVE: 24h
     volumes:
       - ollama:/root/.ollama
-    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 3 && ollama pull ${OLLAMA_MODEL:-qwen2.5:3b} && wait"]
+    entrypoint: ["/bin/sh", "-c", "ollama serve & sleep 3 && ollama pull ${OLLAMA_MODEL:-qwen2.5:3b} && ollama pull ${EMBEDDING_MODEL:-nomic-embed-text} && wait"]
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 10s
@@ -73,6 +73,7 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://ollama:11434/v1}
       OPENAI_MODEL: ${OPENAI_MODEL:-qwen2.5:3b}
       DEFAULT_AGENT_MODEL: ${DEFAULT_AGENT_MODEL:-qwen2.5:3b}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       SMTP_HOST: ${SMTP_HOST:-mailhog}
       SMTP_PORT: ${SMTP_PORT:-1025}
       SMTP_USER: ${SMTP_USER:-}

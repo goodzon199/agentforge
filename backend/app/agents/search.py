@@ -44,15 +44,16 @@ class SearchAgent(BaseAgent):
 
     def execute(self, objective: str, input_data: dict[str, Any]) -> AgentOutput:
         query = extract_query(objective, input_data)
-        results = self._search_knowledge(query)
+        results = self._search(query)
 
         if results:
             lines = [f"По запросу «{query}» найдено записей: {len(results)}"]
-            for entry in results:
+            for entry, score in results:
                 snippet = entry.content.replace("\n", " ").strip()
                 if len(snippet) > 160:
                     snippet = snippet[:160] + "…"
-                lines.append(f"• {entry.title} — {snippet}")
+                suffix = f" (схожесть {score:.2f})" if score is not None else ""
+                lines.append(f"• {entry.title} — {snippet}{suffix}")
             response = "\n".join(lines)
             found = True
         else:
@@ -68,9 +69,10 @@ class SearchAgent(BaseAgent):
                 "action": "search_done",
                 "query": query,
                 "found": found,
+                "mode": "vector" if results and results[0][1] is not None else "keyword",
                 "results": [
-                    {"title": e.title, "content": e.content, "tags": e.tags}
-                    for e in results
+                    {"title": e.title, "content": e.content, "tags": e.tags, "score": s}
+                    for e, s in results
                 ],
             },
             routing_decision={
@@ -81,7 +83,14 @@ class SearchAgent(BaseAgent):
             handoff_agent=None,
         )
 
-    def _search_knowledge(self, query: str) -> list[Any]:
+    def _search(self, query: str) -> list[tuple[Any, float | None]]:
+        """Vector search first (semantic), keyword match as a fallback."""
+        vector = self.memory.vector_search(self.record.company_id, query)
+        if vector:
+            return [(entry, score) for entry, score in vector]
+        return [(entry, None) for entry in self._search_keywords(query)]
+
+    def _search_keywords(self, query: str) -> list[Any]:
         """Case-insensitive match on title/content/tags over company knowledge."""
         entries = self.memory.knowledge(self.record.company_id, limit=100)
         needle = query.lower()

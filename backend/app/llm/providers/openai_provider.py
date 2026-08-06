@@ -44,3 +44,8 @@ class OpenAIProvider(BaseLLMProvider):
         completion = self._client.chat.completions.create(**payload)
         content = completion.choices[0].message.content or ""
         return LLMResponse(content=content, model=model, raw=completion.model_dump())
+
+    def embed(self, text: str, *, model: str) -> list[float]:
+        """Text embedding via the /v1/embeddings endpoint (Ollama-compatible)."""
+        resp = self._client.embeddings.create(model=model, input=[text])
+        return list(resp.data[0].embedding)

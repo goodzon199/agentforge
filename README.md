@@ -43,7 +43,8 @@ docker compose up --build
   достаёт получателя/тему/текст и отправляет письмо по SMTP (в демо — MailHog,
   UI на http://localhost:8025). Получателя можно указать в поле «Кому (email)».
 - **SearchAgent** — специалист по поиску: ищет по базе знаний компании
-  (демо-каталог запчастей). Внешние каталоги подключаются позже.
+  (**векторный поиск** через Ollama-эмбеддинги + fallback на ключевой матч;
+  демо-каталог запчастей). Внешние каталоги подключаются позже.
 
 ```
 Задача: "Найди тормозные колодки"
@@ -79,7 +80,7 @@ npm run dev                   # http://localhost:3000
 
 ```bash
 cd backend
-.venv\Scripts\python.exe -m pytest     # 21 тест: агенты, оркестратор, API, память, email, поиск
+.venv\Scripts\python.exe -m pytest     # 25 тестов: агенты, оркестратор, API, память, email, поиск, эмбеддинги
 ```
 
 ## Структура
@@ -116,5 +117,6 @@ agentforge/
 | Frontend  | Next.js 15, TypeScript, Tailwind CSS              |
 | Инфра     | Docker Compose                                    |
 | LLM       | OpenAI (и совместимые: Azure, Ollama)             |
+| Поиск     | Ollama-эмбеддинги (nomic-embed-text) + vector search |
 
 Подробнее об архитектуре: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).

@@ -177,3 +177,96 @@ def test_search_query_extraction():
     assert extract_query("Поищи масло Castrol", {}) == "масло Castrol"
     assert extract_query("тормозные колодки", {}) == "тормозные колодки"
     assert extract_query("x", {"query": "масляный фильтр"}) == "масляный фильтр"
+
+
+def test_search_agent_uses_vector_search_when_available(db_session, monkeypatch):
+    import hashlib
+    import re
+
+    from sqlalchemy import select
+
+    from app.agents.search import SearchAgent
+    from app.core.config import settings
+    from app.memory.service import entry_text
+
+    class _FakeLLM:
+        available = True
+
+        def embed(self, text, model=None):
+            vector = [0.0] * 32
+            for token in re.findall(r"\w+", text.lower()):
+                digest = int(hashlib.md5(token.encode()).hexdigest()[:4], 16) % 32
+                vector[digest] += 1.0
+            return vector
+
+    monkeypatch.setattr("app.memory.service.llm_client", _FakeLLM())
+    monkeypatch.setattr(settings, "embedding_model", "test-embed")
+
+    record = db_session.scalars(
+        select(Agent).where(Agent.slug == "search-agent")
+    ).first()
+
+    agent = SearchAgent(
+        record=record,
+        memory=MemoryService(db_session),
+        tools=ToolRegistry(),
+        llm=LLMClient(),
+    )
+    output = agent.execute("Найди тормозные колодки", {})
+    assert output.data["mode"] == "vector"
+    assert output.data["found"] is True
+    assert output.data["results"][0]["score"] > 0.3
+    assert "TRW" in output.data["results"][0]["title"]
+
+
+def test_vector_search_ranks_relevant_entry_first(db_session, monkeypatch):
+    import hashlib
+    import re
+
+    from sqlalchemy import select
+
+    from app.core.config import settings
+    from app.memory.service import MemoryService, cosine_similarity
+
+    class _FakeLLM:
+        available = True
+
+        def embed(self, text, model=None):
+            vector = [0.0] * 32
+            for token in re.findall(r"\w+", text.lower()):
+                digest = int(hashlib.md5(token.encode()).hexdigest()[:4], 16) % 32
+                vector[digest] += 1.0
+            return vector
+
+    monkeypatch.setattr("app.memory.service.llm_client", _FakeLLM())
+    monkeypatch.setattr(settings, "embedding_model", "test-embed")
+
+    memory = MemoryService(db_session)
+    company = db_session.scalars(select(Agent)).first().company
+    memory.embed_missing(company.id)
+
+    results = memory.vector_search(company.id, "масло моторное", top_k=3)
+    assert len(results) == 3
+    top_title = results[0][0].title
+    assert "Масло" in top_title
+    assert results[0][1] > results[1][1]
+
+
+def test_cosine_similarity_basic():
+    from app.memory.service import cosine_similarity
+
+    assert cosine_similarity([1.0, 0.0], [1.0, 0.0]) == 1.0
+    assert cosine_similarity([1.0, 0.0], [0.0, 1.0]) == 0.0
+    assert cosine_similarity([], [1.0]) == 0.0
+    assert cosine_similarity([0.0, 0.0], [1.0, 1.0]) == 0.0
+
+
+def test_entry_text_joins_title_content_tags(db_session):
+    from app.memory.service import entry_text
+
+    from app.models import KnowledgeEntry
+
+    entry = db_session.scalars(select(KnowledgeEntry)).first()
+    text = entry_text(entry)
+    assert entry.title in text
+    assert "Тэги:" in text

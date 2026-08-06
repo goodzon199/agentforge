@@ -29,6 +29,12 @@ class Settings(BaseSettings):
     default_agent_model: str = "gpt-4o-mini"
     default_agent_temperature: float = 0.3
 
+    # Embeddings (vector search over the Knowledge Base)
+    # Модель эмбеддингов (Ollama: nomic-embed-text / mxbai-embed-large и т.п.).
+    # Пустая строка = векторный поиск выключен, работает ключевой fallback.
+    embedding_model: str = ""
+    embedding_top_k: int = 5
+
     # Orchestrator
     orchestrator_workers: int = 4
     task_queue_name: str = "agentos:tasks"

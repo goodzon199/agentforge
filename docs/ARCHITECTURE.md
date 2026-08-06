@@ -65,8 +65,9 @@ Orchestrator.process(task)
   `to`/`subject`/`body` из `input_data` (fallback: `EMAIL_DEFAULT_TO`, objective)
   и отправляет письмо через `email_tool`.
 - **SearchAgent** (`search-agent`) — ищет по базе знаний компании
-  (`KnowledgeEntry`): извлекает запрос из задачи (`extract_query`) и делает
-  case-insensitive-матч по title/content/tags. Пусто → ответ «ничего не найдено».
+  (`KnowledgeEntry`). Сначала **векторный поиск** (эмбеддинги через Ollama,
+  cosine similarity), при недоступности — case-insensitive fallback по
+  title/content/tags. Пусто → ответ «ничего не найдено».
   Внешние каталоги (Rossko, Armtek и т.п.) подключаются через `search_tool`.
 
 Маршрутизация SystemAgent по handoff-имени в тип агента — в `agents/registry.py`
@@ -101,6 +102,18 @@ Agent
 
 MemoryService собирает контекст агента через `build_context()` — это вход
 для следующего промпта.
+
+### Векторный поиск (эмбеддинги)
+
+- Модель эмбеддингов — `EMBEDDING_MODEL` (Ollama, по умолчанию `nomic-embed-text`,
+  768 измерений). Пусто → векторный поиск выключен.
+- `MemoryService.embed_missing(company_id)` — заполняет пустые `embedding`
+  у `KnowledgeEntry` (текст = title + content + tags).
+- `MemoryService.vector_search(company_id, query)` — эмбеддит запрос и считает
+  `cosine_similarity` по всем записям, возвращает ранжированные `(entry, score)`.
+- SearchAgent: векторный поиск → fallback на ключевой матч.
+- Векторы хранятся в JSON-поле `KnowledgeEntry.embedding` (без внешней векторной
+  БД — для демо достаточно; при масштабировании — pgvector/Milvus).
 
 ## Инструменты
 
@@ -149,7 +162,7 @@ alembic upgrade head
 
 - **SearchAgent** — подключение реального поискового провайдера (каталог запчастей
   Rossko/Armtek, веб-поиск) через `search_tool`/`http_tool`.
+- **Эмбеддинги** — переход на pgvector/Milvus при росте базы знаний.
 - **EmailAgent** — расширение: шаблоны писем, вложения, несколько SMTP-профилей.
-- Эмбеддинги + векторный поиск по Knowledge Base.
 - Авторизация: JWT, пользователи, права компаний.
 - Метрики и дашборд «цифровой штат».

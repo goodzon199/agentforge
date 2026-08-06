@@ -42,5 +42,14 @@ class LLMClient:
             max_tokens=max_tokens,
         )
 
+    def embed(self, text: str, *, model: str | None = None) -> list[float] | None:
+        """Embed a text into a vector. Returns None when unavailable."""
+        if self._provider is None:
+            return None
+        try:
+            return self._provider.embed(text=text, model=model or settings.embedding_model)
+        except Exception:
+            return None
+
 
 llm_client = LLMClient()

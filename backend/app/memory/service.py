@@ -6,8 +6,26 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.llm.client import llm_client
 from app.models import Agent, KnowledgeEntry, LongMemory, MemoryEntry, ShortMemory
 from app.models.enums import MemoryType
+
+
+def cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Cosine similarity between two equal-length vectors."""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return dot / (na * nb)
+
+
+def entry_text(entry: KnowledgeEntry) -> str:
+    return f"{entry.title}. {entry.content} Тэги: {' '.join(entry.tags or [])}"
 
 
 class MemoryService:
@@ -110,6 +128,52 @@ class MemoryService:
             stmt = stmt.where(KnowledgeEntry.title.ilike(f"%{query}%"))
         stmt = stmt.order_by(KnowledgeEntry.created_at.desc()).limit(limit)
         return list(self.db.scalars(stmt).unique().all())
+
+    # --- Vector search (embeddings) ---------------------------------------
+
+    def embed_missing(self, company_id: uuid.UUID) -> int:
+        """Embed knowledge entries that don't have a vector yet. Returns how many were created."""
+        if not settings.embedding_model or not llm_client.available:
+            return 0
+        entries = self.db.scalars(
+            select(KnowledgeEntry).where(KnowledgeEntry.company_id == company_id)
+        ).all()
+        count = 0
+        for entry in entries:
+            if entry.embedding:
+                continue
+            vector = llm_client.embed(entry_text(entry), model=settings.embedding_model)
+            if vector:
+                entry.embedding = vector
+                count += 1
+        if count:
+            self.db.commit()
+        return count
+
+    def vector_search(
+        self,
+        company_id: uuid.UUID,
+        query: str,
+        *,
+        top_k: int | None = None,
+    ) -> list[tuple[KnowledgeEntry, float]]:
+        """Semantic search over company knowledge. Empty list = unavailable/off."""
+        if not settings.embedding_model or not llm_client.available:
+            return []
+        self.embed_missing(company_id)
+        query_vector = llm_client.embed(query, model=settings.embedding_model)
+        if not query_vector:
+            return []
+        entries = self.db.scalars(
+            select(KnowledgeEntry).where(KnowledgeEntry.company_id == company_id)
+        ).all()
+        scored = [
+            (entry, cosine_similarity(query_vector, entry.embedding or []))
+            for entry in entries
+            if entry.embedding
+        ]
+        scored.sort(key=lambda pair: pair[1], reverse=True)
+        return scored[: (top_k or settings.embedding_top_k)]
 
     def build_context(self, agent: Agent) -> dict[str, object]:
         """Assemble the memory context used to build an agent's next prompt."""
