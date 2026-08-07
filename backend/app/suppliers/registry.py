@@ -4,6 +4,7 @@ from typing import Any
 
 from app.suppliers.base import SupplierAdapter
 from app.suppliers.csv import CsvSupplierAdapter
+from app.suppliers.http import HttpSupplierAdapter
 from app.suppliers.mock import MockSupplierAdapter
 
 
@@ -17,6 +18,7 @@ class SupplierRegistry:
     def _register_defaults(self) -> None:
         self.register(MockSupplierAdapter)
         self.register(CsvSupplierAdapter)
+        self.register(HttpSupplierAdapter)
 
     def register(self, adapter_cls: type[SupplierAdapter]) -> None:
         self._adapters[adapter_cls.type] = adapter_cls

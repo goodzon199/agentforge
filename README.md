@@ -79,6 +79,17 @@
 > аналоги/сроки/остатки), SecurityPolicy (оверрайды PermissionEngine,
 > зеркалятся в `settings.permissions`). API `/company-policies`, UI-вкладка
 > «Политики компании».
+>
+> Sprint 3 (часть 6) — Real Supplier Integration: хватит mock — живой
+> HTTP-адаптер поставщика (`HttpSupplierAdapter`, тип `http`) через
+> `SupplierRegistry`, ничего не ломая. Авторизация (api-key/bearer/basic),
+> поиск по артикулу, кроссы (аналоги расширяются в офферы `is_cross=true`),
+> остатки/цена/срок; типизированные ошибки (`SupplierAuthError`,
+> `SupplierRateLimitError`, `SupplierTimeoutError`, `SupplierConnectionError`,
+> `SupplierParseError`, `SupplierResponseError`), ретраи с экспоненциальным
+> бэкoff и учётом `Retry-After`, rate-limit (мин. интервал между запросами).
+> Конфигурация через `supplier.settings` (Rossko/Armtek-style JSON API);
+> поле `is_cross` у `SupplierOffer` (миграция `a1b2c3d4e5fb`).
 
 ---
 
@@ -86,15 +97,18 @@
 
 > Номер спринта + статус, чтобы roadmap не терялся между релизами.
 
-**Выполнено (12):** Sprint 1 (Foundation) · Sprint 2.1–2.6 (Диалоги, Intake,
+**Выполнено (13):** Sprint 1 (Foundation) · Sprint 2.1–2.6 (Диалоги, Intake,
 Поставщики mock/csv, Цены, Согласование продажи, Заказы) · Sprint 3.1 (Пилотные
 каналы) · 3.2 (Аналитика пилота) · 3.3 (Качество агентов) · 3.4 (PermissionEngine)
-· 3.5 (Company Policy Engine).
+· 3.5 (Company Policy Engine) · 3.6 (Real Supplier Integration: HTTP-адаптер
+с auth/search/crosses/остатками/ошибками/retry/rate-limit).
 
-**Sprint 3.6 — Supplier live integration** *(не сделано — следующий кандидат)*:
-переход с mock/csv на как минимум одного реального поставщика (Rossko/Armtek и
-т.п.) через `SupplierRegistry` + HTTP-адаптер: живые цены, остатки, сроки поставки.
-Веха: система перестаёт быть тестовым контуром и работает на реальных данных.
+**Sprint 3.7 — Настройка реального поставщика** *(не сделано — следующий
+кандидат)*: подключить конкретного поставщика (Rossko/Armtek) к
+`HttpSupplierAdapter` — заполнить `base_url`, схему `keys`, auth-креды;
+прогнать через `/suppliers/{id}/test` и первые живые заявки; подобрать
+`offers_key`/`crosses_key` под реальный ответ API. Веха: система перестаёт
+быть тестовым контуром и работает на реальных данных.
 
 **Sprint 4 — «Агентство агентов»** *(не сделано)*: выделение универсальных
 компонентов из вертикального продукта — Agent Runtime, Orchestrator, Tool Registry,
@@ -108,7 +122,29 @@ Beauty Pack (Reception/Booking/Sales/Reminder) и RealEstate Pack
 
 ## Что сделано (по порядку, последнее сверху)
 
-1. **feat/company-policy-engine** — бизнес-правила компании отдельным доменом:
+1. **feat/supplier-http-adapter** — реальный поставщик через `SupplierAdapter`:
+   - `suppliers/http.py` — `HttpSupplierAdapter` (тип `http`): HTTP-запросы
+     к Rossko/Armtek-style JSON API. Авторизация `api_key`/`bearer`/`basic`,
+     поиск по артикулу/бренду, **кроссы** (`data.crosses` расширяются в
+     офферы `is_cross=true`), остатки (`quantity`), цена (`price`), срок
+     (`delivery_days`). Полевые ключи настраиваются (`keys`, `offers_key`,
+     `crosses_key` — dotted path).
+   - `suppliers/errors.py` — типизированные ошибки: `SupplierConnectionError`,
+     `SupplierTimeoutError`, `SupplierAuthError`, `SupplierRateLimitError`,
+     `SupplierResponseError`, `SupplierParseError` — дружелюбные русские
+     сообщения, ни один сбой не роняет поиск.
+   - **Retry** — экспоненциальный бэкoff для транзиентных (408/425/429/5xx,
+     сеть), учёт `Retry-After`; **rate limit** — мин. интервал между запросами
+     (`min_interval`), per-loop asyncio-lock.
+   - `is_cross` у `NormalizedSupplierOffer` и `SupplierOffer`
+     (миграция `a1b2c3d4e5fb`, live применена); персист в `PartsSearchService`.
+   - Регистрация в `SupplierRegistry` (`types() = [mock, csv, http]`);
+     конфигурация — через существующий `supplier.settings`, API не менялся.
+   - pytest **233 passed** (+19: auth/search/crosses/errors/retry/rate-limit/
+     timeout/healthcheck на фейковом HTTP-сервере). Live smoke:
+     `/suppliers` POST `http` + `/test` — грациозная ошибка при недоступности.
+
+2. **feat/company-policy-engine** — бизнес-правила компании отдельным доменом:
    - `CompanyPolicy` (таблица `company_policies`, одна строка на компанию):
      пять JSON-политик `pricing / supplier / approval / sales / security`;
      `core/policies.py` — типизированные дефолты, `merge_policy` —

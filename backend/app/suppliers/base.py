@@ -31,6 +31,7 @@ class NormalizedSupplierOffer:
     purchase_price: Decimal | None = None
     quantity: int | None = None
     delivery_days: int | None = None
+    is_cross: bool = False
 
 
 class SupplierAdapter(ABC):

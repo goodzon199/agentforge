@@ -4,7 +4,7 @@ import uuid
 from decimal import Decimal
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Integer, Numeric, String
+from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -38,6 +38,9 @@ class SupplierOffer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     purchase_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
     delivery_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_cross: Mapped[bool] = mapped_column(
+        Boolean(), nullable=False, default=False, server_default=text("false")
+    )
 
     # Stamped by the pricing engine (sprint 2.4). customer_price is the
     # customer-facing unit price, total_price = customer_price * quantity.

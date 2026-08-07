@@ -123,6 +123,7 @@ class PartsSearchService:
                     purchase_price=offer.purchase_price,
                     quantity=offer.quantity,
                     delivery_days=offer.delivery_days,
+                    is_cross=offer.is_cross,
                 )
             )
 
