@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.risk import requires_approval_for, risk_for
 from app.models import (
+    Agent,
     AgentAction,
     AgentFeedback,
     ApprovalRequest,
@@ -111,6 +112,13 @@ class SalesService:
         quote.guard_status = "pass" if guard.passed else "block"
         quote.guard_errors = guard.errors if not guard.passed else None
 
+        if not guard.passed:
+            # A draft contradicting the quote is a hallucination signal — it
+            # feeds the quality report and the learning moat (sprint 3.2).
+            self._record_hallucination(
+                quote, message, agent_record.id if agent_record is not None else None
+            )
+
         self._record_action(
             company_id=quote.company_id,
             action_type="prepare_sales_draft",
@@ -193,6 +201,7 @@ class SalesService:
                 status=AgentActionStatus.failed,
                 idempotency_key=key,
             )
+            self._record_hallucination(quote, final, agent_id)
             self.db.commit()
             raise GuardBlockedError(guard.to_dict())
 
@@ -355,6 +364,7 @@ class SalesService:
                 feedback_type=AgentFeedbackType.rejected,
                 original_output=quote.ai_draft,
                 final_output=None,
+                prompt_version=quote.prompt_version,
             )
         )
         quote.status = QuoteStatus.draft
@@ -378,6 +388,7 @@ class SalesService:
             "final_message": quote.final_message,
             "guard_status": quote.guard_status,
             "guard_errors": quote.guard_errors,
+            "prompt_version": quote.prompt_version,
             "sent_at": quote.sent_at.isoformat() if quote.sent_at else None,
             "created_at": quote.created_at.isoformat(),
         }
@@ -413,6 +424,7 @@ class SalesService:
 
     def _llm_draft(self, quote: Quote, items: list[dict[str, Any]], llm) -> str | None:
         from app.llm.types import LLMMessage
+        from app.services.prompt_service import PromptService
 
         data = [
             {
@@ -425,14 +437,12 @@ class SalesService:
             }
             for it in items
         ]
-        system_prompt = (
-            "Ты — SalesAgent, составляешь сообщение клиенту с вариантами товаров. "
-            "Используй ТОЛЬКО данные из квоты (бренд, артикул, цена, срок, наличие). "
-            "Не выдумывай товары, бренды, цены или сроки. Никогда не сообщай закупочную "
-            "цену и наценку. Цены указывай в рублях с символом ₽ и пробелом между разрядами "
-            "(например «8 950 ₽»). Формат: приветствие, список вариантов, вопрос, какой подходит. "
-            "Верни только текст сообщения без кавычек и пояснений."
+        system_prompt, version = PromptService(self.db).active_prompt(
+            "sales", quote.company_id
         )
+        # Stamp which prompt version produced this draft — the key to comparing
+        # quality across prompt versions (sprint 3.2).
+        quote.prompt_version = version
         user_prompt = (
             f"Квота (клиентская информация):\n{data}\n"
             "Составь сообщение клиенту."
@@ -577,14 +587,44 @@ class SalesService:
         self.db.add(
             AgentFeedback(
                 company_id=approval.company_id,
-                agent_id=approval.requested_by_agent_id,
+                agent_id=approval.requested_by_agent_id or self._sales_agent_id(approval.company_id),
                 task_id=approval.task_id,
                 action_id=approval.action_id,
                 feedback_type=feedback_type,
                 original_output=original,
                 final_output=final_output,
+                prompt_version=quote.prompt_version if quote is not None else None,
             )
         )
+
+    def _record_hallucination(
+        self,
+        quote: Quote,
+        output: str,
+        agent_id=None,
+    ) -> None:
+        """A QuoteGuard block means the agent's text contradicted the quote —
+        recorded as incorrect_fact feedback so hallucination_rate is real."""
+        self.db.add(
+            AgentFeedback(
+                company_id=quote.company_id,
+                agent_id=agent_id or self._sales_agent_id(quote.company_id),
+                feedback_type=AgentFeedbackType.incorrect_fact,
+                original_output=output,
+                final_output=None,
+                prompt_version=quote.prompt_version,
+            )
+        )
+
+    def _sales_agent_id(self, company_id) -> uuid.UUID | None:
+        """Attribute output reviews to the company's SalesAgent even when the
+        send/approve API call did not carry an agent id."""
+        stmt = select(Agent).where(
+            Agent.company_id == company_id,
+            Agent.slug == "sales-agent",
+        )
+        agent = self.db.scalars(stmt).first()
+        return agent.id if agent is not None else None
 
     def _get_approval_or_raise(self, approval_id: uuid.UUID, user) -> ApprovalRequest:
         approval = self.db.get(ApprovalRequest, approval_id)

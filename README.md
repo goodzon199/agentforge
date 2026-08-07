@@ -50,12 +50,45 @@
 > конвейера (avg/p95/% в SLA по каждой стадии), латентность поставщиков,
 > счётчики LLM и watchdog: зависшие задачи/поиски помечаются failed
 > (task_timeout / supplier_failed) и попадают в метрики.
+>
+> Sprint 3 (часть 3) — Качество агентов: `AgentFeedback` реально используется
+> как метрика качества по агентам (accept / edit / reject / hallucination rate,
+> human takeover, avg response, стоимость LLM на задачу), версии промптов
+> SalesAgent (v1 «Базовая версия» → v2 «Структурированный шаблон») с
+> A/B-сравнением качества, `LLMUsage` — стоимость каждого вызова,
+> API `/agents/quality` и `/prompts`, UI-блоки «Качество агентов» и
+> «Версии промптов» с активацией.
 
 ---
 
 ## Что сделано (по порядку, последнее сверху)
 
-1. **feat/pilot-analytics** — аналитика пилота: деньги и SLA на дашборде:
+1. **feat/agent-quality** — качество агентов и версии промптов:
+   - `AgentFeedback` (accept / edit / reject / incorrect_fact) превращён в
+     метрику: `GET /agents/quality?days=N` возвращает по каждому агенту
+     задачи, success_rate, avg_response_seconds, человеческую обратную связь
+     (счётчики + проценты), human takeover (по `AgentAction`), LLM-вызовы и
+     стоимость (`LLMUsage`, тарифы `llm_rub_per_1m_tokens` в config, 0 для
+     неизвестных моделей, напр. ollama), cost per task.
+   - Версии промптов: модель `PromptVersion`, сидинг создаёт sales v1/v2,
+     `Quote.prompt_version` и `AgentFeedback.prompt_version` — обратная связь
+     группируется по версии в `by_prompt_version` (A/B: v1 «Базовая версия»
+     против v2 «Структурированный шаблон»). API `/prompts`:
+     GET / POST / POST `{id}/activate` / DELETE, scoped по компании (403
+     чужой компании). `PromptService.active_prompt` отдаёт активную версию,
+     SalesAgent дёргает её при подготовке черновика.
+   - Галлюцинации: при детерминированном guard-block или блокированной
+     отправке SalesAgent пишет `AgentFeedback.incorrect_fact`, атрибуция —
+     по переданному `agent_id` или фоллбэк `sales-agent` по slug.
+   - Стоимость LLM: `llm/cost.py` + `TaskLLMProxy` в `llm/client.py`
+     (записывает usage каждого `chat()` и flush в БД по завершении задачи),
+     оркестратор присваивает `task.agent_id` по финальному агенту.
+   - UI: блок «Качество агентов · 7 дней» (rates, ответ, перехват, цена) и
+     «Версии промптов · сравнение качества» с кнопкой «Активировать».
+   - Миграция `a1b2c3d4e5f9` (идемпотентная) применена live; live-проверка
+     `/agents/quality` и `/prompts` (v1 активна); pytest **179 passed**.
+
+2. **feat/pilot-analytics** — аналитика пилота: деньги и SLA на дашборде:
    - `GET /analytics/pilot?days=N` под JWT (scoped по компании): запросы,
      диалоги, `ai_handled` (AI отвечал в диалоге), `handed_to_manager` и
      `takeover_rate` (по `AgentAction.conversation_takeover`), заявки,

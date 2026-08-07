@@ -10,6 +10,7 @@ from app.core.security import hash_password
 from app.models import Agent, AgentTool, Company, KnowledgeEntry, Supplier, User
 from app.models.enums import AgentStatus, AgentType
 from app.orchestrator.orchestrator import SYSTEM_AGENT_SLUG
+from app.services.prompt_service import DEMO_PROMPT_VERSIONS, PromptService
 
 logger = logging.getLogger(__name__)
 
@@ -174,6 +175,28 @@ def _ensure_agent(
     return True
 
 
+def _ensure_prompt_versions(db: Session, company_id) -> bool:
+    """Seed the demo prompt versions (v1 active) for quality comparison."""
+    service = PromptService(db)
+    created = False
+    for agent_kind, versions in DEMO_PROMPT_VERSIONS.items():
+        for index, (version, name, description, content) in enumerate(versions):
+            if service._find(company_id, agent_kind, version) is not None:
+                continue
+            service.create(
+                company_id=company_id,
+                agent_kind=agent_kind,
+                version=version,
+                name=name,
+                description=description,
+                content=content,
+                is_active=(index == 0),
+            )
+            created = True
+            logger.info("Создана версия промпта %s:%s", agent_kind, version)
+    return created
+
+
 def seed_demo(db: Session) -> dict[str, object]:
     """Create the demo company, built-in agents and knowledge base if missing."""
     created = {
@@ -184,6 +207,7 @@ def seed_demo(db: Session) -> dict[str, object]:
         "intake_agent": False,
         "pricing_agent": False,
         "sales_agent": False,
+        "prompts": False,
         "knowledge": False,
         "suppliers": False,
         "admin": False,
@@ -300,6 +324,8 @@ def seed_demo(db: Session) -> dict[str, object]:
         agent_type=AgentType.specialized,
         company_id=company.id,
     )
+
+    created["prompts"] = _ensure_prompt_versions(db, company.id)
 
     knowledge_count = db.scalars(
         select(KnowledgeEntry).where(KnowledgeEntry.company_id == company.id)

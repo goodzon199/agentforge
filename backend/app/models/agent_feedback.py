@@ -40,5 +40,8 @@ class AgentFeedback(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     final_output: Mapped[str | None] = mapped_column(Text, nullable=True)
     rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # Which prompt version produced the output being reviewed (sprint 3.2).
+    prompt_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
     def __repr__(self) -> str:  # pragma: no cover
         return f"<AgentFeedback {self.feedback_type.value}>"

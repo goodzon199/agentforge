@@ -35,6 +35,16 @@ class Settings(BaseSettings):
     embedding_model: str = ""
     embedding_top_k: int = 5
 
+    # LLM cost estimation (sprint 3.2): RUB per 1M tokens, per model.
+    # Models not listed are treated as free (e.g. local Ollama). Used for
+    # cost/task in the agent-quality report.
+    llm_price_rub_per_1m_input: dict[str, float] = {
+        "gpt-4o-mini": 13.5,
+    }
+    llm_price_rub_per_1m_output: dict[str, float] = {
+        "gpt-4o-mini": 54.0,
+    }
+
     # Orchestrator
     orchestrator_workers: int = 4
     task_queue_name: str = "agentos:tasks"

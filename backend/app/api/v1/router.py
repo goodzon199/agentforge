@@ -14,6 +14,7 @@ from app.api.v1 import (
     logs,
     orders,
     part_requests,
+    quality,
     quotes,
     settings,
     suppliers,
@@ -27,7 +28,10 @@ api_router.include_router(auth.router)
 api_router.include_router(chat.router)
 
 # Resource routers require a valid JWT.
+# quality defines /agents/quality before agents defines /agents/{agent_id},
+# otherwise the dynamic route swallows the exact path.
 for module in (
+    quality,
     dashboard,
     analytics,
     companies,

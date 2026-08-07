@@ -387,3 +387,54 @@ export type PilotAnalytics = {
   llm: LlmStats;
   task_timeouts: number;
 };
+
+export type FeedbackRates = {
+  feedback_total: number;
+  acceptance: number;
+  edit: number;
+  rejection: number;
+  hallucination: number;
+  acceptance_rate: number | null;
+  edit_rate: number | null;
+  rejection_rate: number | null;
+  hallucination_rate: number | null;
+};
+
+export type AgentQuality = {
+  agent_id: string;
+  name: string;
+  slug: string;
+  role: string;
+  tasks_total: number;
+  tasks_completed: number;
+  tasks_failed: number;
+  success_rate: number | null;
+  avg_response_seconds: number | null;
+  feedback: FeedbackRates;
+  human_takeover: number | null;
+  llm_calls: number;
+  total_llm_cost: number;
+  cost_per_task: number | null;
+};
+
+export type PromptVersionQuality = FeedbackRates & {
+  agent_kind: string;
+  prompt_version: string;
+};
+
+export type AgentQualityReport = {
+  days: number;
+  agents: AgentQuality[];
+  by_prompt_version: PromptVersionQuality[];
+};
+
+export type PromptVersion = {
+  id: string;
+  company_id: string | null;
+  agent_kind: string;
+  version: string;
+  name: string;
+  description: string | null;
+  content: string;
+  is_active: boolean;
+};

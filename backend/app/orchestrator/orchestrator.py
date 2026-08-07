@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.registry import agent_registry
 from app.core.redis import redis_client
-from app.llm.client import LLMClient, llm_client
+from app.llm.client import LLMClient, TaskLLMProxy, llm_client
 from app.memory.service import MemoryService
 from app.models import Agent as AgentRecord
 from app.models import Task, TaskEvent
@@ -87,6 +87,10 @@ class Orchestrator:
         task.started_at = _now()
         db.commit()
 
+        # Wrap the shared LLM client per task so token usage can be attributed
+        # to the executing agent (cost/task metric, sprint 3.2).
+        llm = TaskLLMProxy(self.llm)
+
         try:
             agent_record = self._resolve_system_agent(db)
             if agent_record is None:
@@ -96,7 +100,7 @@ class Orchestrator:
                 record=agent_record,
                 memory=MemoryService(db),
                 tools=self.tools,
-                llm=self.llm,
+                llm=llm,
                 db=db,
             )
 
@@ -132,7 +136,7 @@ class Orchestrator:
                     record=target_record,
                     memory=MemoryService(db),
                     tools=self.tools,
-                    llm=self.llm,
+                    llm=llm,
                     db=db,
                 )
                 output = target.execute(task.objective, task.input_data or {})
@@ -157,12 +161,20 @@ class Orchestrator:
             task.routing_decision = output.routing_decision
             task.status = TaskStatus.completed
             task.completed_at = _now()
+            # Attribute the task to the agent that actually executed it.
+            task.agent_id = final_agent.id
 
             self._add_event(
                 db,
                 task,
                 source="orchestrator",
                 message=f"Задача завершена. {output.response}",
+            )
+            llm.flush(
+                db,
+                task_id=task.id,
+                company_id=task.company_id,
+                agent_id=final_agent.id,
             )
             self._update_statistics(db, final_agent, success=True)
             db.commit()
@@ -173,6 +185,7 @@ class Orchestrator:
             task.status = TaskStatus.failed
             task.error = str(exc)
             task.completed_at = _now()
+            llm.flush(db, task_id=task.id, company_id=task.company_id)
             self._add_event(
                 db,
                 task,

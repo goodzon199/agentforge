@@ -56,6 +56,9 @@ class Quote(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     guard_status: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
     guard_errors: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
+    # Which SalesAgent prompt version produced ai_draft (sprint 3.2).
+    prompt_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover

@@ -7,9 +7,11 @@ from app.models.company import Company
 from app.models.conversation import Conversation
 from app.models.conversation_message import ConversationMessage
 from app.models.customer import Customer
+from app.models.llm_usage import LLMUsage
 from app.models.memory import KnowledgeEntry, LongMemory, MemoryEntry, ShortMemory
 from app.models.order import Order
 from app.models.part_request import PartRequest
+from app.models.prompt_version import PromptVersion
 from app.models.quote import Quote
 from app.models.supplier import Supplier
 from app.models.supplier_offer import SupplierOffer
@@ -30,10 +32,12 @@ __all__ = [
     "ConversationMessage",
     "Customer",
     "KnowledgeEntry",
+    "LLMUsage",
     "LongMemory",
     "MemoryEntry",
     "Order",
     "PartRequest",
+    "PromptVersion",
     "Quote",
     "ShortMemory",
     "Supplier",
