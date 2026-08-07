@@ -71,6 +71,36 @@
 
 ---
 
+## Роадмап (явные следующие блоки)
+
+> Номер спринта + статус, чтобы roadmap не терялся между релизами.
+
+**Выполнено (11):** Sprint 1 (Foundation) · Sprint 2.1–2.6 (Диалоги, Intake,
+Поставщики mock/csv, Цены, Согласование продажи, Заказы) · Sprint 3.1 (Пилотные
+каналы) · 3.2 (Аналитика пилота) · 3.3 (Качество агентов) · 3.4 (PermissionEngine).
+
+**Sprint 3.5 — Supplier live integration** *(не сделано — следующий кандидат)*:
+переход с mock/csv на как минимум одного реального поставщика (Rossko/Armtek и
+т.п.) через `SupplierRegistry` + HTTP-адаптер: живые цены, остатки, сроки поставки.
+Веха: система перестаёт быть тестовым контуром и работает на реальных данных.
+
+**Sprint 3.6 — Company Policies / бизнес-правила компании** *(не сделано)*:
+отдельный домен «как компания хочет продавать» — в отличие от PermissionEngine,
+который отвечает «можно ли действовать». Минимальная маржа, приоритет поставщиков,
+разрешённые бренды, максимальный срок поставки, лимит автоотправки quote, правила
+скидок. Хранение: `company.settings` (сейчас есть только `pricing.margin_percent`,
+расширяется до домена `policies`).
+
+**Sprint 4 — «Агентство агентов»** *(не сделано)*: выделение универсальных
+компонентов из вертикального продукта — Agent Runtime, Orchestrator, Tool Registry,
+Supplier/Integration Registry, Memory, Permission Engine ✓ (уже есть), Approval
+Engine, Action Engine, Workflow Engine, Analytics. Автозапчасти становятся первым
+вертикальным Pack (IntakeAgent, PartsSearchAgent, PricingAgent, SalesAgent,
+OrderAgent), затем Beauty Pack (Reception/Booking/Sales/Reminder) и RealEstate Pack
+(Lead/Qualification/PropertySearch/Viewing).
+
+---
+
 ## Что сделано (по порядку, последнее сверху)
 
 1. **feat/permission-engine** — единый механизм безопасности:

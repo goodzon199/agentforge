@@ -172,6 +172,16 @@ alembic upgrade head
 
 ## Планы (Sprint 2+)
 
+- **Supplier live integration (Sprint 3.5)** — реальный поставщик (Rossko/Armtek)
+  с живыми ценами, остатками и сроками вместо mock/csv; HTTP-адаптер в
+  `SupplierRegistry`. Веха выхода на реальные данные.
+- **Company Policies (Sprint 3.6)** — бизнес-правила компании (минимальная маржа,
+  приоритет поставщиков, разрешённые бренды, макс. срок поставки, лимит
+  автоотправки quote, правила скидок) как отдельный домен в `company.settings`,
+  поверх PermissionEngine.
+- **«Агентство агентов» (Sprint 4)** — выделение универсальных компонентов
+  (Agent Runtime, Orchestrator, Tool Registry, Approval/Action/Workflow Engine,
+  Memory, Analytics) и вертикальных Pack (AutoParts / Beauty / RealEstate).
 - **SearchAgent** — подключение реального поискового провайдера (каталог запчастей
   Rossko/Armtek, веб-поиск) через `search_tool`/`http_tool`.
 - **Эмбеддинги** — переход на pgvector/Milvus при росте базы знаний.
