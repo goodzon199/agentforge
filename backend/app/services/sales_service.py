@@ -224,6 +224,17 @@ class SalesService:
             context={"quote_id": str(quote.id), "conversation_id": str(quote.conversation_id)},
         )
         if decision.requires_approval:
+            if decision.risk_level == "MEDIUM" and self._policy_auto_send(quote):
+                # Company Policy Engine: the business rule says this quote may
+                # go out on its own (auto_send_quote or amount threshold).
+                self._perform_send(quote, final, action=action)
+                self.db.commit()
+                return {
+                    "status": QuoteStatus.sent.value,
+                    "message_sent": True,
+                    "already_executed": False,
+                    "quote_id": str(quote.id),
+                }
             approval = self._create_approval(quote, action, final, agent_id)
             quote.status = QuoteStatus.pending_approval
 
@@ -248,6 +259,21 @@ class SalesService:
             "already_executed": False,
             "quote_id": str(quote.id),
         }
+
+    def _policy_auto_send(self, quote: Quote) -> bool:
+        """Whether the Company Policy Engine lets this quote out on its own."""
+        from app.services.company_policy_service import CompanyPolicyService
+
+        cps = CompanyPolicyService(self.db)
+        sales = cps.policy(quote.company_id, "sales")
+        if sales.get("auto_send_quote") is True:
+            return True
+        approval = cps.policy(quote.company_id, "approval")
+        threshold = approval.get("auto_approve_quote_amount")
+        if threshold is None:
+            return False
+        total = _dec(quote.quote_total)
+        return total > 0 and total <= Decimal(str(threshold))
 
     def approve(self, approval_id: uuid.UUID, user) -> dict[str, Any]:
         approval = self._get_approval_or_raise(approval_id, user)

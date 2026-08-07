@@ -4,6 +4,7 @@ from app.models.agent_action import AgentAction
 from app.models.agent_feedback import AgentFeedback
 from app.models.approval_request import ApprovalRequest
 from app.models.company import Company
+from app.models.company_policy import CompanyPolicy
 from app.models.conversation import Conversation
 from app.models.conversation_message import ConversationMessage
 from app.models.customer import Customer
@@ -28,6 +29,7 @@ __all__ = [
     "AgentTool",
     "ApprovalRequest",
     "Company",
+    "CompanyPolicy",
     "Conversation",
     "ConversationMessage",
     "Customer",

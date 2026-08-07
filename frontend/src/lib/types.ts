@@ -438,3 +438,13 @@ export type PromptVersion = {
   content: string;
   is_active: boolean;
 };
+
+export type CompanyPolicies = {
+  company_id: string;
+  pricing: Record<string, unknown>;
+  supplier: Record<string, unknown>;
+  approval: Record<string, unknown>;
+  sales: Record<string, unknown>;
+  security: Record<string, unknown>;
+  defaults: Record<string, Record<string, unknown>>;
+};

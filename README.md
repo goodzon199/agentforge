@@ -68,6 +68,17 @@
 > Sales/Order/Conversation flows и аудит `AgentAction` берут риск и
 > require-approval из одного источника; API `/permissions/evaluate`,
 > `/permissions/policies` (GET/PUT).
+>
+> Sprint 3 (часть 5) — Company Policy Engine: бизнес-правила компании в
+> отдельном домене (`CompanyPolicy`, 5 JSON-политик) — «как именно компания
+> продаёт», в отличие от PermissionEngine «можно ли действовать»:
+> PricingPolicy (мин. маржа, наценки по поставщикам, мин. прибыль,
+> округление, скидки), SupplierPolicy (приоритет, запрещённые/любимые бренды,
+> макс. срок, рейтинг, макс. вариантов), ApprovalPolicy (автоотправка по сумме,
+> нужен менеджер/владелец), SalesPolicy (автоотправка quote, эмодзи, стиль,
+> аналоги/сроки/остатки), SecurityPolicy (оверрайды PermissionEngine,
+> зеркалятся в `settings.permissions`). API `/company-policies`, UI-вкладка
+> «Политики компании».
 
 ---
 
@@ -75,35 +86,51 @@
 
 > Номер спринта + статус, чтобы roadmap не терялся между релизами.
 
-**Выполнено (11):** Sprint 1 (Foundation) · Sprint 2.1–2.6 (Диалоги, Intake,
+**Выполнено (12):** Sprint 1 (Foundation) · Sprint 2.1–2.6 (Диалоги, Intake,
 Поставщики mock/csv, Цены, Согласование продажи, Заказы) · Sprint 3.1 (Пилотные
-каналы) · 3.2 (Аналитика пилота) · 3.3 (Качество агентов) · 3.4 (PermissionEngine).
+каналы) · 3.2 (Аналитика пилота) · 3.3 (Качество агентов) · 3.4 (PermissionEngine)
+· 3.5 (Company Policy Engine).
 
-**Sprint 3.5 — Supplier live integration** *(не сделано — следующий кандидат)*:
+**Sprint 3.6 — Supplier live integration** *(не сделано — следующий кандидат)*:
 переход с mock/csv на как минимум одного реального поставщика (Rossko/Armtek и
 т.п.) через `SupplierRegistry` + HTTP-адаптер: живые цены, остатки, сроки поставки.
 Веха: система перестаёт быть тестовым контуром и работает на реальных данных.
 
-**Sprint 3.6 — Company Policies / бизнес-правила компании** *(не сделано)*:
-отдельный домен «как компания хочет продавать» — в отличие от PermissionEngine,
-который отвечает «можно ли действовать». Минимальная маржа, приоритет поставщиков,
-разрешённые бренды, максимальный срок поставки, лимит автоотправки quote, правила
-скидок. Хранение: `company.settings` (сейчас есть только `pricing.margin_percent`,
-расширяется до домена `policies`).
-
 **Sprint 4 — «Агентство агентов»** *(не сделано)*: выделение универсальных
 компонентов из вертикального продукта — Agent Runtime, Orchestrator, Tool Registry,
-Supplier/Integration Registry, Memory, Permission Engine ✓ (уже есть), Approval
-Engine, Action Engine, Workflow Engine, Analytics. Автозапчасти становятся первым
-вертикальным Pack (IntakeAgent, PartsSearchAgent, PricingAgent, SalesAgent,
-OrderAgent), затем Beauty Pack (Reception/Booking/Sales/Reminder) и RealEstate Pack
+Supplier/Integration Registry, Memory, Permission Engine ✓, Approval Engine, Action
+Engine, Workflow Engine, Analytics. Автозапчасти становятся первым вертикальным
+Pack (IntakeAgent, PartsSearchAgent, PricingAgent, SalesAgent, OrderAgent), затем
+Beauty Pack (Reception/Booking/Sales/Reminder) и RealEstate Pack
 (Lead/Qualification/PropertySearch/Viewing).
 
 ---
 
 ## Что сделано (по порядку, последнее сверху)
 
-1. **feat/permission-engine** — единый механизм безопасности:
+1. **feat/company-policy-engine** — бизнес-правила компании отдельным доменом:
+   - `CompanyPolicy` (таблица `company_policies`, одна строка на компанию):
+     пять JSON-политик `pricing / supplier / approval / sales / security`;
+     `core/policies.py` — типизированные дефолты, `merge_policy` —
+     компания хранит только свои оверрайды.
+   - `PricingService`: мин. маржа (floor над наценкой), наценки по поставщикам
+     (`markups: {slug: %}`), мин. прибыль (поднимает цену), округление к шагу
+     (0.01/1/10/50/100). Дефолты = прежнее поведение (без изменений цены).
+   - `PartsSearchService`: `SupplierPolicy` — запрещённые бренды, любимые
+     первыми, макс. срок, мин. рейтинг (из `supplier.settings.rating`),
+     приоритет поставщиков, лимит `max_variants`.
+   - `SalesService.request_send`: автоотправка по `sales.auto_send_quote`
+     или `approval.auto_approve_quote_amount` (только для MEDIUM-риска;
+     PermissionEngine остаётся шлюзом безопасности).
+   - `SecurityPolicy` зеркалится в `company.settings.permissions` —
+     единый источник для PermissionEngine.
+   - API `/company-policies` (GET — эффективные политики + дефолты; PUT —
+     частичное обновление любого домена). UI: вкладка «Политики компании»
+     (`/policies`) — формы всех пяти доменов.
+   - Миграция `a1b2c3d4e5fa` применена live. pytest **214 passed**
+     (+19: merge/сервис/цены/поставщики/API/e2e автоотправка).
+
+2. **feat/permission-engine** — единый механизм безопасности:
    - `core/permissions.py`: `PermissionEngine` — `evaluate(agent, company,
      action, resource, context)` → `PermissionDecision{allowed,
      requires_approval, risk_level, reason}`; registry `DEFAULT_POLICIES`

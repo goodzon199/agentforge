@@ -108,7 +108,9 @@ class PartsSearchService:
             succeeded += 1
             collected.extend((attempt, offer) for offer in offers)
 
-        deduped = self._dedupe(collected)
+        deduped = self._apply_supplier_policy(
+            self._dedupe(collected), part_request.company_id, suppliers
+        )
         for attempt, offer in deduped:
             self.db.add(
                 SupplierOffer(
@@ -298,6 +300,75 @@ class PartsSearchService:
             )
         )
         return result
+
+    def _apply_supplier_policy(
+        self,
+        collected: list[tuple[SupplierSearchAttempt, NormalizedSupplierOffer]],
+        company_id: uuid.UUID,
+        suppliers: list[Supplier],
+    ) -> list[tuple[SupplierSearchAttempt, NormalizedSupplierOffer]]:
+        """Filter/order/limit offers by the company's supplier policy.
+
+        Blocked brands and over-long lead times are dropped, suppliers with
+        too low a rating are excluded, favorites and the configured priority
+        order win, and the list is trimmed to ``max_variants``.
+        """
+        from app.services.company_policy_service import CompanyPolicyService
+
+        policy = CompanyPolicyService(self.db).policy(company_id, "supplier")
+        blocked = {self._brand(b) for b in (policy.get("blocked_brands") or [])}
+        favorite = {self._brand(b) for b in (policy.get("favorite_brands") or [])}
+        priority = policy.get("priority") or []
+        max_lead = policy.get("max_lead_days")
+        min_rating = Decimal(str(policy.get("min_rating") or 0))
+        max_variants = policy.get("max_variants")
+
+        slugs = {s.id: s.slug for s in suppliers}
+        ratings = {
+            s.id: (s.settings or {}).get("rating") for s in suppliers
+        }
+
+        ranked: list[tuple[int, int, SupplierSearchAttempt, NormalizedSupplierOffer]] = []
+        for attempt, offer in collected:
+            slug = slugs.get(attempt.supplier_id, "")
+            if self._brand(offer.brand) in blocked:
+                continue
+            if (
+                max_lead is not None
+                and offer.delivery_days is not None
+                and offer.delivery_days > int(max_lead)
+            ):
+                continue
+            rating = ratings.get(attempt.supplier_id)
+            if (
+                rating is not None
+                and min_rating > 0
+                and Decimal(str(rating)) < min_rating
+            ):
+                continue
+            try:
+                pidx = priority.index(slug)
+            except ValueError:
+                pidx = len(priority) + 1
+            is_fav = 0 if (slug in favorite or self._brand(offer.brand) in favorite) else 1
+            ranked.append((pidx, is_fav, attempt, offer))
+
+        ranked.sort(
+            key=lambda r: (
+                r[0],
+                r[1],
+                r[3].purchase_price is None,
+                r[3].purchase_price or Decimal("0"),
+            )
+        )
+        result = [(r[2], r[3]) for r in ranked]
+        if max_variants:
+            result = result[: int(max_variants)]
+        return result
+
+    @staticmethod
+    def _brand(brand: str) -> str:
+        return (brand or "").strip().lower()
 
     @staticmethod
     def _result(part_request: PartRequest, run: SupplierSearchRun) -> dict[str, Any]:

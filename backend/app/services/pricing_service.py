@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, ROUND_UP, Decimal
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Company, PartRequest, SupplierOffer, SupplierSearchRun
+from app.models import Company, PartRequest, Supplier, SupplierOffer, SupplierSearchRun
+from app.services.company_policy_service import CompanyPolicyService
 
 _PRICING_KEY = "pricing"
 
@@ -56,19 +57,35 @@ class PricingService:
         if run is None:
             return self._summary(part_request, run=None, offers=[], priced=[])
 
-        margin = self._margin_for(part_request.company_id)
+        company_id = part_request.company_id
+        policy = CompanyPolicyService(self.db).policy(company_id, "pricing")
+        base_margin = self._margin_for(company_id)
+        margin = max(base_margin, Decimal(str(policy.get("min_margin_percent") or 0)))
+        rounding = Decimal(str(policy.get("rounding") or "0.01"))
+        min_profit = Decimal(str(policy.get("min_profit") or 0))
+        markups = policy.get("markups") or {}
+        slugs = {
+            s.id: s.slug
+            for s in self.db.scalars(
+                select(Supplier).where(Supplier.company_id == company_id)
+            ).unique()
+        }
         offers = self._offers_for_run(run.id)
 
         priced: list[tuple[SupplierOffer, Decimal, Decimal]] = []
         for offer in offers:
             if offer.purchase_price is None:
                 continue
-            unit = self.price(offer.purchase_price, margin)
+            offer_margin = margin + Decimal(str(markups.get(slugs.get(offer.supplier_id, ""), 0) or 0))
             qty = part_request.quantity or 1
+            unit = self.price(offer.purchase_price, offer_margin)
+            unit = self._round_step(unit, rounding)
+            if min_profit > 0:
+                unit = self._apply_min_profit(offer.purchase_price, unit, min_profit, qty, rounding)
             total = (unit * qty).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
             offer.customer_price = unit
             offer.total_price = total
-            offer.margin_percent = margin
+            offer.margin_percent = offer_margin
             priced.append((offer, unit, total))
 
         best = self._best(priced)
@@ -135,6 +152,31 @@ class PricingService:
             * (Decimal("1") + Decimal(str(margin_percent)) / Decimal("100"))
         ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         return unit
+
+    @staticmethod
+    def _round_step(value: Decimal, step: Decimal) -> Decimal:
+        """Round a price to the nearest ``step`` (0.01 / 1 / 10 / 50 / 100)."""
+        step = Decimal(str(step))
+        if step <= 0:
+            return value
+        return (value / step).quantize(Decimal("1"), rounding=ROUND_HALF_UP) * step
+
+    @staticmethod
+    def _apply_min_profit(
+        purchase: Decimal,
+        unit: Decimal,
+        min_profit: Decimal,
+        quantity: int,
+        step: Decimal,
+    ) -> Decimal:
+        """Raise the unit price so the offer's profit is at least ``min_profit``."""
+        step = Decimal(str(step))
+        if step <= 0:
+            step = Decimal("0.01")
+        if (unit - purchase) * quantity >= min_profit:
+            return unit
+        needed = purchase + min_profit / quantity
+        return (needed / step).quantize(Decimal("1"), rounding=ROUND_UP) * step
 
     # --- Internals ---------------------------------------------------------
 
