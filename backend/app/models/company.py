@@ -21,6 +21,10 @@ class Company(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     agent_quota: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
     settings: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    # Public token used by the web-chat widget (public channel, no JWT).
+    public_token: Mapped[str | None] = mapped_column(
+        String(64), unique=True, index=True, nullable=True
+    )
 
     agents: Mapped[list["Agent"]] = relationship("Agent", back_populates="company", lazy="selectin")
     tasks: Mapped[list["Task"]] = relationship("Task", back_populates="company", lazy="selectin")

@@ -6,6 +6,7 @@ from app.api.v1 import (
     agents,
     approvals,
     auth,
+    chat,
     companies,
     conversations,
     dashboard,
@@ -20,6 +21,9 @@ from app.api.v1 import (
 
 api_router = APIRouter()
 api_router.include_router(auth.router)
+
+# Public web-chat widget channel: no JWT, identified by company public_token.
+api_router.include_router(chat.router)
 
 # Resource routers require a valid JWT.
 for module in (

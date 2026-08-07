@@ -26,6 +26,29 @@ import { QuoteSalesPanel } from "@/components/conversations/QuoteSalesPanel";
 
 const ACTIVE_STATUSES = ["collecting_data", "ready_for_search", "searching", "quoted"];
 
+const MODE_LABEL: Record<string, string> = {
+  ai_active: "AI",
+  human_active: "Менеджер",
+  paused: "Пауза",
+  closed: "Закрыт",
+};
+
+function ModeBadge({ mode }: { mode: string }) {
+  const cls =
+    mode === "human_active"
+      ? "bg-amber-500/15 text-amber-400"
+      : mode === "paused"
+        ? "bg-slate-500/15 text-slate-400"
+        : mode === "closed"
+          ? "bg-rose-500/15 text-rose-400"
+          : "bg-emerald-500/15 text-emerald-400";
+  return (
+    <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${cls}`}>
+      {MODE_LABEL[mode] ?? mode}
+    </span>
+  );
+}
+
 function activePartRequest(partRequests: PartRequest[]): PartRequest | undefined {
   return (
     partRequests.find((pr) => ACTIVE_STATUSES.includes(pr.status)) ?? partRequests[0]
@@ -197,6 +220,23 @@ export default function ConversationsPage() {
     }
   }
 
+  const [modeBusy, setModeBusy] = useState(false);
+  const [asManager, setAsManager] = useState(false);
+
+  async function changeMode(action: "takeover" | "release" | "pause" | "close" | "reopen") {
+    if (!selected || modeBusy) return;
+    setModeBusy(true);
+    try {
+      const updated = await api.post<Conversation>(`/conversations/${selected.id}/${action}`, {});
+      await reload();
+      await api.get<ConversationDetail>(`/conversations/${selected.id}`).then((d) => {
+        setSelected(d);
+      });
+    } finally {
+      setModeBusy(false);
+    }
+  }
+
   async function selectConversation(id: string) {
     const detail = await api.get<ConversationDetail>(`/conversations/${id}`);
     setSelected(detail);
@@ -226,10 +266,11 @@ export default function ConversationsPage() {
   async function sendMessage(e: React.FormEvent) {
     e.preventDefault();
     if (!selected || !draft.trim() || sending) return;
+    const senderType = selected.mode === "human_active" || asManager ? "manager" : "customer";
     setSending(true);
     try {
       const sent = await api.post<MessageSent>(`/conversations/${selected.id}/messages`, {
-        sender_type: "customer",
+        sender_type: senderType,
         content: draft.trim(),
       });
       setSelected({
@@ -342,7 +383,10 @@ export default function ConversationsPage() {
                 >
                   <div className="flex items-center justify-between">
                     <span className="truncate text-sm font-medium text-white">{c.customer_name}</span>
-                    <StatusBadge status={c.status} />
+                    <span className="flex items-center gap-1.5">
+                      <ModeBadge mode={c.mode} />
+                      <StatusBadge status={c.status} />
+                    </span>
                   </div>
                   <div className="mt-0.5 text-[11px] text-slate-500">
                     {c.channel} · {new Date(c.updated_at).toLocaleString("ru-RU")}
@@ -357,10 +401,67 @@ export default function ConversationsPage() {
           {selected ? (
             <>
               <div className="border-b border-surface-border px-5 py-3">
-                <div className="text-sm font-semibold text-white">{selected.customer_name}</div>
-                <div className="text-xs text-slate-500">
-                  Диалог · {selected.channel} · обновлён {new Date(selected.updated_at).toLocaleString("ru-RU")}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-semibold text-white">{selected.customer_name}</div>
+                    <div className="text-xs text-slate-500">
+                      Диалог · {selected.channel} · обновлён {new Date(selected.updated_at).toLocaleString("ru-RU")}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <ModeBadge mode={selected.mode} />
+                    {selected.mode === "ai_active" ? (
+                      <>
+                        <button className="btn-ghost" onClick={() => changeMode("takeover")} disabled={modeBusy}>
+                          Перехватить диалог
+                        </button>
+                        <button className="btn-ghost" onClick={() => changeMode("pause")} disabled={modeBusy}>
+                          Пауза
+                        </button>
+                        <button className="btn-ghost" onClick={() => changeMode("close")} disabled={modeBusy}>
+                          Закрыть
+                        </button>
+                      </>
+                    ) : null}
+                    {selected.mode === "human_active" ? (
+                      <>
+                        <button className="btn-primary" onClick={() => changeMode("release")} disabled={modeBusy}>
+                          Вернуть AI
+                        </button>
+                        <button className="btn-ghost" onClick={() => changeMode("close")} disabled={modeBusy}>
+                          Закрыть
+                        </button>
+                      </>
+                    ) : null}
+                    {selected.mode === "paused" ? (
+                      <>
+                        <button className="btn-primary" onClick={() => changeMode("release")} disabled={modeBusy}>
+                          Вернуть AI
+                        </button>
+                        <button className="btn-ghost" onClick={() => changeMode("takeover")} disabled={modeBusy}>
+                          Перехватить
+                        </button>
+                        <button className="btn-ghost" onClick={() => changeMode("close")} disabled={modeBusy}>
+                          Закрыть
+                        </button>
+                      </>
+                    ) : null}
+                    {selected.mode === "closed" ? (
+                      <button className="btn-ghost" onClick={() => changeMode("reopen")} disabled={modeBusy}>
+                        Возобновить
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
+                {selected.mode !== "ai_active" ? (
+                  <div className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                    {selected.mode === "human_active"
+                      ? "AI-агент не отвечает — диалог ведёт менеджер. Сообщения ниже отправляются от имени менеджера."
+                      : selected.mode === "paused"
+                        ? "Диалог на паузе: ни AI, ни клиент не получают автодействий."
+                        : "Диалог закрыт: AI не отвечает, пока вы не возобновите его."}
+                  </div>
+                ) : null}
               </div>
 
               <div className="border-b border-surface-border px-5 py-3">
@@ -409,9 +510,27 @@ export default function ConversationsPage() {
               </div>
 
               <form onSubmit={sendMessage} className="flex gap-2 border-t border-surface-border p-3">
+                <div className="flex flex-col">
+                  <button
+                    type="button"
+                    className={`rounded px-2 py-1 text-[11px] font-medium ${
+                      asManager || selected.mode === "human_active"
+                        ? "bg-accent/20 text-accent-soft"
+                        : "bg-surface text-slate-400 hover:bg-surface-hover"
+                    }`}
+                    onClick={() => setAsManager((v) => !v)}
+                    title="Отправить сообщение от имени менеджера"
+                  >
+                    {asManager || selected.mode === "human_active" ? "Менеджер" : "Клиент"}
+                  </button>
+                </div>
                 <input
                   className="input flex-1"
-                  placeholder="Например: Нужны передние колодки на BMW X5 2019"
+                  placeholder={
+                    selected.mode === "human_active"
+                      ? "Ответ клиенту от менеджера…"
+                      : "Например: Нужны передние колодки на BMW X5 2019"
+                  }
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
                 />

@@ -38,12 +38,47 @@
 > Sprint 2 (часть 6) — Заказы: клиент принимает квоту (`accepted`), менеджер
 > конвертирует принятую квоту в `Order` (HIGH-риск, только человек),
 > автопринятие из диалога клиента, страница «Заказы» в UI.
+>
+> Sprint 3 (часть 1) — Пилотные каналы: публичный web-chat канал
+> (`/public/chat`) без JWT — посетитель сайта превращается в Conversation и
+> прогоняется через весь pipeline; human takeover — `conversation.mode`
+> (ai_active / human_active / paused / closed), при перехвате AI замолкает,
+> страница «Веб-чат» для демо.
 
 ---
 
 ## Что сделано (по порядку, последнее сверху)
 
-1. **feat/order-conversion** — вертикальный срез «квота → заказ»:
+1. **feat/pilot-webchat-takeover** — первый реальный канал + управление диалогом:
+   - Публичный web-chat: `POST /public/chat/start` (ищет компанию по
+     `companies.public_token`, находит-или-создаёт Customer source=webchat и
+     Conversation channel=webchat; тот же `client_key` резюмирует диалог),
+     `POST /public/chat/messages` (тот же `ConversationService.add_message` →
+     таск → оркестратор → ответ агента), `GET /public/chat/{id}/messages`
+     (polling для виджета). Всё без JWT.
+   - Human takeover: у Conversation появился `mode`
+     (ai_active/human_active/paused/closed) + ручки
+     `POST /conversations/{id}/takeover|release|pause|close|reopen`
+     (scoped по компании). Гейт в `add_message`: входящее сообщение клиента
+     сохраняется, но задача `process_customer_message` создаётся только при
+     `ai_active`; `IntakeService` дополнительно не отвечает при перехвате
+     (защита от in-flight задач). Менеджер отвечает как `sender_type=manager`.
+     Смена режима пишется в `AgentAction` (conversation_takeover/release/…)
+     — база для метрики human-takeover-rate.
+   - Устойчивость Intake: если LLM вернул пустой/заглушечный уточняющий вопрос
+     (например «...»), используется детерминированный вопрос (VIN/деталь).
+   - Frontend: в диалогах бейдж режима + кнопки «Перехватить диалог»,
+     «Вернуть AI», «Пауза», «Закрыть», «Возобновить»; при human_active
+     сообщения уходят от имени менеджера; отдельная публичная страница
+     `/webchat` (виджет-демо, без авторизации).
+   - Alembic-миграция `a1b2c3d4e5f8` (conversations.mode + companies.public_token),
+     применена в live-БД; `public_token` бэкфиллится сидингом и виден в
+     `GET /companies`.
+   - Тесты 166/166 (+9): публичный чат (start/resume/полный pipeline/404/403),
+     перехват (AI молчит при human_active/paused/closed, менеджер отвечает,
+     release возобновляет), scoping 403, аудит takeover. Live E2E: web-chat →
+     «Пришлите VIN» → перехват → AI молчит → ответ менеджера → release.
+2. **feat/order-conversion** — вертикальный срез «квота → заказ»:
    - `OrderService`: `accept()` (LOW-риск, только из `sent`, идемпотентный,
      аудит `AgentAction accept_quote`), автопринятие `accept_if_customer_confirms()`
      — regex-детект подтверждения («да, беру» / «подтверждаю» / «не беру») в

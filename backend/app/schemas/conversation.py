@@ -38,6 +38,7 @@ class ConversationCreate(BaseModel):
     customer_id: uuid.UUID
     channel: str = Field(default="web", max_length=40)
     status: str = Field(default="open", max_length=40)
+    mode: str = Field(default="ai_active", max_length=40)
 
 
 class ConversationRead(ORMModel):
@@ -46,6 +47,7 @@ class ConversationRead(ORMModel):
     customer_id: uuid.UUID
     channel: str
     status: str
+    mode: str
     assigned_user_id: uuid.UUID | None
     created_at: datetime
     updated_at: datetime

@@ -20,6 +20,7 @@ def _read(company: Company) -> CompanyRead:
         description=company.description,
         is_active=company.is_active,
         agent_quota=company.agent_quota,
+        public_token=company.public_token,
         created_at=company.created_at,
         updated_at=company.updated_at,
         agents_count=len(company.agents),

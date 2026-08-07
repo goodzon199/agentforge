@@ -53,6 +53,17 @@ class IntakeService:
         *,
         agent_id: uuid.UUID,
     ) -> IntakeOutcome:
+        # Human takeover gate: if a manager is driving (or the conversation is
+        # paused/closed), the AI must not process or reply. The message itself
+        # is already stored — the manager sees it and answers.
+        if not ConversationService(self.db).can_agent_act(conversation):
+            return IntakeOutcome(
+                action="human_active",
+                reply="",
+                intent=result.intent,
+                missing_fields=result.missing_fields,
+            )
+
         if result.intent != "part_search":
             return self._handle_other_intent(conversation, message, result, agent_id)
 
@@ -100,7 +111,7 @@ class IntakeService:
             reply = self._confirmation(part_request, vehicle)
             search_task_id = self._create_search_task(conversation, part_request)
         else:
-            reply = result.clarification_question or self._clarification(missing)
+            reply = self._safe_clarification(result, missing)
             search_task_id = None
 
         self._agent_reply(conv_service, conversation, reply, agent_id)
@@ -246,6 +257,8 @@ class IntakeService:
     ) -> None:
         if not reply:
             return
+        if not ConversationService(self.db).can_agent_act(conversation):
+            return
         # sender_id is FK'd to users.id, so agent replies keep it NULL and
         # attribute the reply to the agent inside structured_data.
         conv_service.add_message(
@@ -287,6 +300,14 @@ class IntakeService:
         if intent == "general_question":
             return "Передал вопрос сотруднику — отвечу в ближайшее время."
         return "Уточните, пожалуйста, что именно вам нужно: деталь, статус заказа или другое."
+
+    def _safe_clarification(self, result, missing: list[str]) -> str:
+        """Prefer the LLM's clarification unless it is empty or an echoed
+        placeholder (e.g. the model literally returned "...")."""
+        question = (result.clarification_question or "").strip(" .")
+        if len(question) < 3 or question in {"...", "...|null"}:
+            return self._clarification(missing)
+        return result.clarification_question
 
     def _clarification(self, missing: list[str]) -> str:
         if "part" in missing:

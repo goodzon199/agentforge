@@ -13,6 +13,13 @@ ACTION_RISK: dict[str, ApprovalRiskLevel] = {
     "read_message": ApprovalRiskLevel.low,
     "search_parts": ApprovalRiskLevel.low,
     "price_parts": ApprovalRiskLevel.low,
+    # Conversation ownership changes (sprint 3 human takeover). Human-initiated,
+    # recorded in the audit trail for the human-takeover-rate metric.
+    "conversation_takeover": ApprovalRiskLevel.low,
+    "conversation_release": ApprovalRiskLevel.low,
+    "conversation_pause": ApprovalRiskLevel.low,
+    "conversation_close": ApprovalRiskLevel.low,
+    "conversation_reopen": ApprovalRiskLevel.low,
     "send_customer_message": ApprovalRiskLevel.medium,
     "create_crm_lead": ApprovalRiskLevel.medium,
     "schedule_meeting": ApprovalRiskLevel.medium,

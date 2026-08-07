@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import Enum, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
 from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.enums import ConversationMode
 
 
 class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -22,6 +23,12 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     channel: Mapped[str] = mapped_column(String(40), nullable=False, default="web")
     status: Mapped[str] = mapped_column(String(40), nullable=False, default="open")
+    mode: Mapped[ConversationMode] = mapped_column(
+        Enum(ConversationMode, name="conversation_mode"),
+        nullable=False,
+        default=ConversationMode.ai_active,
+        server_default=ConversationMode.ai_active.value,
+    )
     assigned_user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True
     )

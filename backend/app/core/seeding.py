@@ -16,6 +16,25 @@ logger = logging.getLogger(__name__)
 DEMO_COMPANY_SLUG = "demo"
 DEMO_COMPANY_NAME = "Демо-компания"
 
+
+def ensure_public_tokens(
+    db: Session, force: list[Company] | None = None
+) -> int:
+    """Give every company without one a public web-chat token (idempotent)."""
+    from secrets import token_urlsafe
+
+    companies = list(force or [])
+    if not companies:
+        companies = list(db.scalars(select(Company)).all())
+    added = 0
+    for company in companies:
+        if not company.public_token:
+            company.public_token = token_urlsafe(16)
+            added += 1
+    if added:
+        db.flush()
+    return added
+
 SYSTEM_AGENT_GOAL = (
     "Оркестрировать задачи: получать запросы и направлять их профильным агентам."
 )
@@ -185,6 +204,9 @@ def seed_demo(db: Session) -> dict[str, object]:
         db.flush()
         created["company"] = True
         logger.info("Создана демо-компания '%s'", DEMO_COMPANY_NAME)
+
+    # Web-chat widget needs a public token; backfill any company without one.
+    ensure_public_tokens(db, force=[company])
 
     created["system_agent"] = _ensure_agent(
         db,

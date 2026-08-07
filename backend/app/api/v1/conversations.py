@@ -4,8 +4,9 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import get_conversation_service
-from app.models import Conversation, Task
+from app.api.deps import get_conversation_service, get_current_user
+from app.models import Conversation, Task, User
+from app.models.enums import ConversationMode
 from app.orchestrator.orchestrator import orchestrator
 from app.schemas.conversation import (
     ConversationCreate,
@@ -18,6 +19,7 @@ from app.schemas.conversation import (
     MessageSent,
 )
 from app.services.conversation_service import ConversationService
+from app.services.sales_service import company_allowed
 
 customers_router = APIRouter(prefix="/customers", tags=["customers"])
 conversations_router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -34,6 +36,7 @@ def _conversation_read(conversation: Conversation) -> ConversationRead:
         customer_id=conversation.customer_id,
         channel=conversation.channel,
         status=conversation.status,
+        mode=conversation.mode.value,
         assigned_user_id=conversation.assigned_user_id,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
@@ -107,6 +110,90 @@ def get_conversation(
         **_conversation_read(conversation).model_dump(),
         messages=[_message_read(m) for m in conversation.messages],
     )
+
+
+# --- Mode / human takeover ------------------------------------------------
+
+def _get_scoped_conversation(
+    conversation_id: uuid.UUID,
+    service: ConversationService,
+    user: User,
+) -> Conversation:
+    conversation = service.get_conversation(conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Диалог не найден")
+    if not company_allowed(user, conversation.company_id):
+        raise HTTPException(status_code=403, detail="Диалог принадлежит другой компании")
+    return conversation
+
+
+@conversations_router.post("/{conversation_id}/takeover", response_model=ConversationRead)
+def takeover_conversation(
+    conversation_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    service: ConversationService = Depends(get_conversation_service),
+):
+    """A manager takes over: the AI stops responding, only the manager replies."""
+    conversation = _get_scoped_conversation(conversation_id, service, user)
+    conversation = service.set_mode(
+        conversation, ConversationMode.human_active, user_id=user.id
+    )
+    service.db.commit()
+    service.db.refresh(conversation)
+    return _conversation_read(conversation)
+
+
+@conversations_router.post("/{conversation_id}/release", response_model=ConversationRead)
+def release_conversation(
+    conversation_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    service: ConversationService = Depends(get_conversation_service),
+):
+    """Give the conversation back to the AI (human -> ai_active)."""
+    conversation = _get_scoped_conversation(conversation_id, service, user)
+    conversation = service.set_mode(conversation, ConversationMode.ai_active, user_id=user.id)
+    service.db.commit()
+    service.db.refresh(conversation)
+    return _conversation_read(conversation)
+
+
+@conversations_router.post("/{conversation_id}/pause", response_model=ConversationRead)
+def pause_conversation(
+    conversation_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    service: ConversationService = Depends(get_conversation_service),
+):
+    conversation = _get_scoped_conversation(conversation_id, service, user)
+    conversation = service.set_mode(conversation, ConversationMode.paused, user_id=user.id)
+    service.db.commit()
+    service.db.refresh(conversation)
+    return _conversation_read(conversation)
+
+
+@conversations_router.post("/{conversation_id}/close", response_model=ConversationRead)
+def close_conversation(
+    conversation_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    service: ConversationService = Depends(get_conversation_service),
+):
+    conversation = _get_scoped_conversation(conversation_id, service, user)
+    conversation = service.set_mode(conversation, ConversationMode.closed, user_id=user.id)
+    service.db.commit()
+    service.db.refresh(conversation)
+    return _conversation_read(conversation)
+
+
+@conversations_router.post("/{conversation_id}/reopen", response_model=ConversationRead)
+def reopen_conversation(
+    conversation_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    service: ConversationService = Depends(get_conversation_service),
+):
+    conversation = _get_scoped_conversation(conversation_id, service, user)
+    conversation = service.set_mode(conversation, ConversationMode.ai_active, user_id=user.id)
+    service.db.commit()
+    service.db.refresh(conversation)
+    return _conversation_read(conversation)
 
 
 # --- Messages --------------------------------------------------------------

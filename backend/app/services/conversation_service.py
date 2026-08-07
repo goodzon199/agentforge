@@ -7,7 +7,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Conversation, ConversationMessage, Customer
+from app.core.risk import risk_for
+from app.models import AgentAction, Conversation, ConversationMessage, Customer
+from app.models.enums import AgentActionStatus, ConversationMode
 from app.services.task_service import TaskService
 
 
@@ -16,6 +18,59 @@ class ConversationService:
 
     def __init__(self, db: Session) -> None:
         self.db = db
+
+    # --- Conversation mode (sprint 3 human takeover) -----------------------
+
+    @staticmethod
+    def can_agent_act(conversation: Conversation) -> bool:
+        """Whether the AI may autonomously drive this conversation.
+
+        When a human has taken over (human_active) or the conversation is
+        paused/closed, the agent must stay silent and only the manager replies.
+        """
+        return conversation.mode == ConversationMode.ai_active
+
+    def set_mode(
+        self,
+        conversation: Conversation,
+        mode: ConversationMode,
+        *,
+        user_id: uuid.UUID | None = None,
+    ) -> Conversation:
+        """Switch who drives the conversation and record the audit trail."""
+        if mode == conversation.mode:
+            return conversation
+
+        action_type = {
+            ConversationMode.human_active: "conversation_takeover",
+            ConversationMode.ai_active: (
+                "conversation_reopen"
+                if conversation.mode == ConversationMode.closed
+                else "conversation_release"
+            ),
+            ConversationMode.paused: "conversation_pause",
+            ConversationMode.closed: "conversation_close",
+        }[mode]
+
+        conversation.mode = mode
+        if mode == ConversationMode.human_active:
+            conversation.assigned_user_id = user_id
+        conversation.updated_at = datetime.now(timezone.utc)
+
+        self.db.add(
+            AgentAction(
+                company_id=conversation.company_id,
+                action_type=action_type,
+                target_type="conversation",
+                target_id=str(conversation.id),
+                input_data={"conversation_id": str(conversation.id)},
+                result_data={"mode": mode.value},
+                risk_level=risk_for(action_type),
+                status=AgentActionStatus.executed,
+                executed_at=datetime.now(timezone.utc),
+            )
+        )
+        return conversation
 
     # --- Customers ---------------------------------------------------------
 
@@ -56,6 +111,7 @@ class ConversationService:
         customer_id: uuid.UUID,
         channel: str = "web",
         status: str = "open",
+        mode: str = "ai_active",
         assigned_user_id: uuid.UUID | None = None,
     ) -> Conversation:
         conversation = Conversation(
@@ -63,6 +119,7 @@ class ConversationService:
             customer_id=customer_id,
             channel=channel,
             status=status,
+            mode=ConversationMode(mode),
             assigned_user_id=assigned_user_id,
         )
         self.db.add(conversation)
@@ -100,9 +157,11 @@ class ConversationService:
         conversation.updated_at = datetime.now(timezone.utc)
         self.db.flush()  # получить message.id
 
-        # Auto-create a processing task for every incoming customer message.
+        # Auto-create a processing task for every incoming customer message —
+        # unless a human has taken over (or the conversation is paused/closed).
+        # In those modes the agent stays silent and the manager replies instead.
         task_id: uuid.UUID | None = None
-        if sender_type == "customer":
+        if sender_type == "customer" and self.can_agent_act(conversation):
             task_service = TaskService(self.db)
             task = task_service.create(
                 company_id=conversation.company_id,

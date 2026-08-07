@@ -151,3 +151,18 @@ class OrderStatus(str, enum.Enum):
     confirmed = "confirmed"
     paid = "paid"
     cancelled = "cancelled"
+
+
+class ConversationMode(str, enum.Enum):
+    """Who drives a conversation (pilot human takeover, sprint 3).
+
+    ai_active   — the AI responds to customer messages on its own.
+    human_active — a human has taken over; the AI stays silent.
+    paused      — conversation on hold; neither side actively drives it.
+    closed      — finished; the AI never resumes it on its own.
+    """
+
+    ai_active = "ai_active"
+    human_active = "human_active"
+    paused = "paused"
+    closed = "closed"

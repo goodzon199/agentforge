@@ -106,12 +106,15 @@ export type Customer = {
   created_at: string;
 };
 
+export type ConversationMode = "ai_active" | "human_active" | "paused" | "closed";
+
 export type Conversation = {
   id: string;
   company_id: string;
   customer_id: string;
   channel: string;
   status: string;
+  mode: ConversationMode;
   assigned_user_id: string | null;
   created_at: string;
   updated_at: string;
