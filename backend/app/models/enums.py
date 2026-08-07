@@ -142,3 +142,12 @@ class AgentFeedbackType(str, enum.Enum):
     incorrect_fact = "incorrect_fact"
     bad_tone = "bad_tone"
     wrong_recommendation = "wrong_recommendation"
+
+
+class OrderStatus(str, enum.Enum):
+    """Lifecycle of an order converted from an accepted quote (sprint 2.6)."""
+
+    new = "new"
+    confirmed = "confirmed"
+    paid = "paid"
+    cancelled = "cancelled"

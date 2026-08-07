@@ -180,6 +180,41 @@ def test_full_flow_dod(client, db_session):
     assert again_approve.status_code == 200
     assert again_approve.json()["already_approved"] is True
 
+    # 14. Customer accepts the offer in the dialog -> quote is marked accepted.
+    accept_msg = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        json={"sender_type": "customer", "content": "Да, беру TRW, заказ подтверждаю"},
+    )
+    assert accept_msg.status_code == 201
+    accepted = client.get(f"/api/v1/quotes/{quote_id}/sales-draft").json()
+    assert accepted["status"] == "accepted"
+
+    # 15. Manager converts the accepted quote into an order.
+    converted = client.post(f"/api/v1/quotes/{quote_id}/convert")
+    assert converted.status_code == 200
+    order_id = converted.json()["order_id"]
+    assert converted.json()["status"] == "converted_to_order"
+    assert converted.json()["order_number"].startswith("ORD-")
+
+    order = client.get(f"/api/v1/orders/{order_id}").json()
+    assert order["quote_id"] == quote_id
+    assert order["status"] == "new"
+    assert order["order_total"] == "7930.00"
+
+    final = client.get(f"/api/v1/quotes/{quote_id}/sales-draft").json()
+    assert final["status"] == "converted_to_order"
+
+    # 16. The confirmation lands in the customer dialog.
+    detail = client.get(f"/api/v1/conversations/{conversation_id}").json()
+    order_msgs = [
+        m
+        for m in detail["messages"]
+        if m["sender_type"] == "agent"
+        and (m.get("structured_data") or {}).get("kind") == "order"
+    ]
+    assert len(order_msgs) == 1
+    assert converted.json()["order_number"] in order_msgs[0]["content"]
+
 
 def test_reprocessing_message_does_not_duplicate(client, db_session):
     conversation_id = _make_conversation(client, db_session)

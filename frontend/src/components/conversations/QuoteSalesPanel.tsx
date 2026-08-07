@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
-import type { Approval, SalesDraft } from "@/lib/types";
+import type { Approval, Order, SalesDraft } from "@/lib/types";
 import { getStoredUser } from "@/lib/api";
 
 const STATUS_LABEL: Record<string, string> = {
   draft: "Черновик предложения",
   pending_approval: "На согласовании",
   sent: "Отправлено клиенту",
+  accepted: "Клиент принял",
   rejected: "Отклонено",
   expired: "Истёк срок согласования",
+  converted_to_order: "Конвертирован в заказ",
 };
 
 function formatPrice(value: string | null | undefined): string {
@@ -24,13 +26,26 @@ function formatPrice(value: string | null | undefined): string {
 type Props = {
   draft: SalesDraft | null;
   approval: Approval | null;
+  order: Order | null;
   busy: boolean;
   onSend: (message: string) => void;
   onApprove: (approvalId: string) => void;
   onReject: (approvalId: string) => void;
+  onAccept: () => void;
+  onConvert: () => void;
 };
 
-export function QuoteSalesPanel({ draft, approval, busy, onSend, onApprove, onReject }: Props) {
+export function QuoteSalesPanel({
+  draft,
+  approval,
+  order,
+  busy,
+  onSend,
+  onApprove,
+  onReject,
+  onAccept,
+  onConvert,
+}: Props) {
   const [text, setText] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const isManager = getStoredUser<{ is_superuser?: boolean }>()?.is_superuser === true;
@@ -97,7 +112,7 @@ export function QuoteSalesPanel({ draft, approval, busy, onSend, onApprove, onRe
         className="input mt-3 min-h-[120px] w-full resize-y"
         value={text}
         onChange={(e) => setText(e.target.value)}
-        disabled={status === "sent" || status === "pending_approval" || busy}
+        disabled={status !== "draft" || busy}
         placeholder="Сообщение клиенту с вариантами…"
       />
 
@@ -106,6 +121,20 @@ export function QuoteSalesPanel({ draft, approval, busy, onSend, onApprove, onRe
       {status === "sent" && draft.final_message ? (
         <div className="mt-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-slate-300">
           Отправлено: {draft.final_message}
+        </div>
+      ) : null}
+
+      {status === "accepted" ? (
+        <div className="mt-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-slate-300">
+          Клиент подтвердил выбор — можно оформить заказ.
+        </div>
+      ) : null}
+
+      {order ? (
+        <div className="mt-2 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-xs text-slate-200">
+          <b className="text-white">{order.order_number}</b> · {formatPrice(order.order_total)}{" "}
+          {order.currency} · статус{" "}
+          <span className="text-white">{order.status}</span>
         </div>
       ) : null}
 
@@ -131,6 +160,16 @@ export function QuoteSalesPanel({ draft, approval, busy, onSend, onApprove, onRe
             onClick={() => onReject(approval.id)}
           >
             Отклонить
+          </button>
+        ) : null}
+        {status === "sent" ? (
+          <button className="btn-ghost" disabled={busy} onClick={onAccept}>
+            Клиент принял предложение
+          </button>
+        ) : null}
+        {(status === "sent" || status === "accepted") && isManager ? (
+          <button className="btn-primary" disabled={busy} onClick={onConvert}>
+            Создать заказ
           </button>
         ) : null}
         {hasPendingApproval ? (

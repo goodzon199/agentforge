@@ -10,6 +10,7 @@ from app.models import User
 from app.services.agent_service import AgentService
 from app.services.company_service import CompanyService
 from app.services.conversation_service import ConversationService
+from app.services.order_service import OrderService
 from app.services.part_request_service import PartRequestService
 from app.services.parts_search_service import PartsSearchService
 from app.services.pricing_service import PricingService
@@ -56,6 +57,10 @@ def get_quote_service(db: Session = Depends(get_db)) -> QuoteService:
 
 def get_sales_service(db: Session = Depends(get_db)) -> SalesService:
     return SalesService(db)
+
+
+def get_order_service(db: Session = Depends(get_db)) -> OrderService:
+    return OrderService(db)
 
 
 def get_supplier_service(db: Session = Depends(get_db)) -> SupplierService:

@@ -4,8 +4,9 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.deps import get_current_user, get_sales_service
+from app.api.deps import get_current_user, get_order_service, get_sales_service
 from app.models import Quote, User
+from app.schemas.orders import OrderCreateResult, QuoteAcceptResult
 from app.schemas.sales import (
     QuotePrepareIn,
     QuoteRejectIn,
@@ -13,6 +14,7 @@ from app.schemas.sales import (
     QuoteSendResult,
     SalesDraftRead,
 )
+from app.services.order_service import OrderService
 from app.services.sales_service import (
     ConflictError,
     ForbiddenError,
@@ -102,3 +104,37 @@ def reject_quote(
     except ForbiddenError as exc:
         raise HTTPException(status_code=403, detail=str(exc))
     return _draft(service, quote)
+
+
+@router.post("/{quote_id}/accept", response_model=QuoteAcceptResult)
+def accept_quote(
+    quote_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    service: SalesService = Depends(get_sales_service),
+    orders: OrderService = Depends(get_order_service),
+):
+    quote = _load_quote(quote_id, service, user)
+    try:
+        result = orders.accept(quote, user)
+    except ForbiddenError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return QuoteAcceptResult(**result)
+
+
+@router.post("/{quote_id}/convert", response_model=OrderCreateResult)
+def convert_quote_to_order(
+    quote_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    service: SalesService = Depends(get_sales_service),
+    orders: OrderService = Depends(get_order_service),
+):
+    quote = _load_quote(quote_id, service, user)
+    try:
+        result = orders.create_from_quote(quote, user)
+    except ForbiddenError as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return OrderCreateResult(**result)

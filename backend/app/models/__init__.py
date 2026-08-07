@@ -8,6 +8,7 @@ from app.models.conversation import Conversation
 from app.models.conversation_message import ConversationMessage
 from app.models.customer import Customer
 from app.models.memory import KnowledgeEntry, LongMemory, MemoryEntry, ShortMemory
+from app.models.order import Order
 from app.models.part_request import PartRequest
 from app.models.quote import Quote
 from app.models.supplier import Supplier
@@ -31,6 +32,7 @@ __all__ = [
     "KnowledgeEntry",
     "LongMemory",
     "MemoryEntry",
+    "Order",
     "PartRequest",
     "Quote",
     "ShortMemory",

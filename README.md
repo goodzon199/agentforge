@@ -34,12 +34,39 @@
 > всегда идёт через `ApprovalRequest` менеджера; сущности `Quote`,
 > `AgentAction`, `AgentFeedback`, модель рисков `core/risk.py`, UI-блок
 > «Предложение клиенту» с approve/reject.
+>
+> Sprint 2 (часть 6) — Заказы: клиент принимает квоту (`accepted`), менеджер
+> конвертирует принятую квоту в `Order` (HIGH-риск, только человек),
+> автопринятие из диалога клиента, страница «Заказы» в UI.
 
 ---
 
 ## Что сделано (по порядку, последнее сверху)
 
-1. **feat/sales-approval** — вертикальный срез «предложение клиенту с согласованием»:
+1. **feat/order-conversion** — вертикальный срез «квота → заказ»:
+   - `OrderService`: `accept()` (LOW-риск, только из `sent`, идемпотентный,
+     аудит `AgentAction accept_quote`), автопринятие `accept_if_customer_confirms()`
+     — regex-детект подтверждения («да, беру» / «подтверждаю» / «не беру») в
+     `ConversationService.add_message` для входящих сообщений клиента,
+     `create_from_quote()` (HIGH-риск, только менеджер, `sent`/`accepted` →
+     `Order` + `QuoteStatus.converted_to_order`, номер `ORD-{n}-{hex}`,
+     подтверждение в диалог structured_data `{kind: order, ...}`, идемпотентно).
+   - Сущность `Order`: FK на company/conversation/customer/part_request/quote,
+     `order_number`, `order_total` Numeric(12,2), `items` JSON-снимок квоты,
+     `created_by_user_id`, статусы `new/confirmed/paid/cancelled`.
+   - REST API под JWT: `GET /orders` (scoped по компании), `GET /orders/{id}`,
+     `POST /quotes/{id}/accept`, `POST /quotes/{id}/convert` (403 не-менеджеру,
+     409 не та стадия квоты).
+   - Frontend: в блоке «Предложение клиенту» — «Клиент принял предложение»
+     (send), «Создать заказ» (менеджер, sent/accepted) и статус заказа;
+     новая страница «Заказы» (таблица: номер, статус, сумма, товары, дата)
+     с пунктом в сайдбаре.
+   - Alembic-миграция `a1b2c3d4e5f7` (таблица orders + enum `order_status`),
+     применена в live-БД; E2E: sent → авто-accept → convert → заказ в диалоге
+     → идемпотентность, `create_order` аудируется как HIGH.
+   - Тесты 157/157 (+11): accept/автоaccept/convert/orders API, DoD-сценарий
+     расширен до «… → quote → accepted → convert → order».
+2. **feat/sales-approval** — вертикальный срез «предложение клиенту с согласованием»:
    - Модель рисков `core/risk.py`: `ACTION_RISK` — подготовка черновика (low, агент сам),
      отправка клиенту / создание CRM-записи / письмо (medium → всегда approval),
      изменение цены / скидка / возврат / оплата (high, только человек).

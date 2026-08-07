@@ -9,6 +9,7 @@ from app.models.enums import ApprovalRiskLevel
 # Later each company will be able to override these via its own settings.
 ACTION_RISK: dict[str, ApprovalRiskLevel] = {
     "prepare_sales_draft": ApprovalRiskLevel.low,
+    "accept_quote": ApprovalRiskLevel.low,
     "read_message": ApprovalRiskLevel.low,
     "search_parts": ApprovalRiskLevel.low,
     "price_parts": ApprovalRiskLevel.low,

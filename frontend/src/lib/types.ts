@@ -308,3 +308,34 @@ export type QuoteSendResult = {
   already_executed: boolean;
   quote_id: string | null;
 };
+
+export type Order = {
+  id: string;
+  company_id: string;
+  conversation_id: string;
+  customer_id: string;
+  part_request_id: string;
+  quote_id: string | null;
+  order_number: string;
+  status: string;
+  currency: string;
+  order_total: string | null;
+  items: QuoteItem[];
+  created_by_user_id: string | null;
+  confirmed_at: string | null;
+  created_at: string;
+};
+
+export type QuoteAcceptResult = {
+  quote_id: string;
+  status: string;
+  already_accepted: boolean;
+};
+
+export type OrderCreateResult = {
+  order_id: string | null;
+  order_number: string | null;
+  quote_id: string;
+  status: string;
+  already_converted: boolean;
+};

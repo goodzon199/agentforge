@@ -11,6 +11,8 @@ import type {
   ConversationMessage,
   Customer,
   MessageSent,
+  Order,
+  OrderCreateResult,
   PartQuote,
   PartRequest,
   QuoteSendResult,
@@ -44,6 +46,7 @@ export default function ConversationsPage() {
   const [sending, setSending] = useState(false);
   const [salesDraft, setSalesDraft] = useState<SalesDraft | null>(null);
   const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
   const [salesBusy, setSalesBusy] = useState(false);
 
   // Create-customer form
@@ -66,19 +69,23 @@ export default function ConversationsPage() {
       setQuote(null);
       setSalesDraft(null);
       setApprovals([]);
+      setOrders([]);
       return;
     }
     try {
-      const [loadedOffers, loadedRuns, loadedQuote, loadedApprovals] = await Promise.all([
-        api.get<SupplierOffer[]>(`/part_requests/${active.id}/offers`),
-        api.get<SupplierSearchRun[]>(`/part_requests/${active.id}/search-runs`),
-        api.get<PartQuote>(`/part_requests/${active.id}/quote`),
-        api.get<Approval[]>("/approvals"),
-      ]);
+      const [loadedOffers, loadedRuns, loadedQuote, loadedApprovals, loadedOrders] =
+        await Promise.all([
+          api.get<SupplierOffer[]>(`/part_requests/${active.id}/offers`),
+          api.get<SupplierSearchRun[]>(`/part_requests/${active.id}/search-runs`),
+          api.get<PartQuote>(`/part_requests/${active.id}/quote`),
+          api.get<Approval[]>("/approvals"),
+          api.get<Order[]>("/orders"),
+        ]);
       setOffers(loadedOffers);
       setSearchRuns(loadedRuns);
       setQuote(loadedQuote);
       setApprovals(loadedApprovals);
+      setOrders(loadedOrders);
       if (loadedQuote?.quote_id) {
         try {
           const loadedDraft = await api.get<SalesDraft>(
@@ -97,6 +104,7 @@ export default function ConversationsPage() {
       setQuote(null);
       setSalesDraft(null);
       setApprovals([]);
+      setOrders([]);
     }
   }
 
@@ -123,6 +131,10 @@ export default function ConversationsPage() {
 
   const currentApproval: Approval | null = salesDraft
     ? approvals.find((a) => a.quote_id === salesDraft.quote_id) ?? null
+    : null;
+
+  const currentOrder: Order | null = salesDraft
+    ? orders.find((o) => o.quote_id === salesDraft.quote_id) ?? null
     : null;
 
   async function sendForApproval(message: string) {
@@ -157,6 +169,29 @@ export default function ConversationsPage() {
     try {
       await api.post(`/approvals/${approvalId}/reject`, { rejection_reason: "Отклонено менеджером" });
       await loadPartRequests(selected!.id);
+    } finally {
+      setSalesBusy(false);
+    }
+  }
+
+  async function acceptQuote() {
+    if (!salesDraft || salesBusy) return;
+    setSalesBusy(true);
+    try {
+      await api.post(`/quotes/${salesDraft.quote_id}/accept`, {});
+      await loadPartRequests(selected!.id);
+    } finally {
+      setSalesBusy(false);
+    }
+  }
+
+  async function convertQuote() {
+    if (!salesDraft || salesBusy) return;
+    setSalesBusy(true);
+    try {
+      const result = await api.post<OrderCreateResult>(`/quotes/${salesDraft.quote_id}/convert`, {});
+      await loadPartRequests(selected!.id);
+      await api.get<ConversationDetail>(`/conversations/${selected!.id}`).then(setSelected);
     } finally {
       setSalesBusy(false);
     }
@@ -340,10 +375,13 @@ export default function ConversationsPage() {
                 <QuoteSalesPanel
                   draft={salesDraft}
                   approval={currentApproval}
+                  order={currentOrder}
                   busy={salesBusy}
                   onSend={sendForApproval}
                   onApprove={approveQuote}
                   onReject={rejectQuote}
+                  onAccept={acceptQuote}
+                  onConvert={convertQuote}
                 />
               </div>
 

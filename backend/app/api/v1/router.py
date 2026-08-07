@@ -10,6 +10,7 @@ from app.api.v1 import (
     conversations,
     dashboard,
     logs,
+    orders,
     part_requests,
     quotes,
     settings,
@@ -33,6 +34,7 @@ for module in (
     approvals,
     actions,
     quotes,
+    orders,
 ):
     api_router.include_router(
         module.router,

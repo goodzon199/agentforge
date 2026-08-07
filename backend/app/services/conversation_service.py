@@ -117,6 +117,13 @@ class ConversationService:
             self.db.flush()
             task_id = task.id
 
+            # If a sent quote awaits acceptance, a positive customer reply
+            # flips the quote to `accepted` (order conversion is then up to a
+            # human). Lazy import: order_service depends on this module.
+            from app.services.order_service import OrderService
+
+            OrderService(self.db).accept_if_customer_confirms(conversation, content)
+
         return message, task_id
 
     def list_messages(self, conversation_id: uuid.UUID) -> list[ConversationMessage]:
