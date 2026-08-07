@@ -17,12 +17,14 @@ from app.suppliers.http import HttpSupplierAdapter
 from app.suppliers.mock import MockSupplierAdapter
 from app.suppliers.normalize import normalize_article
 from app.suppliers.registry import SupplierRegistry, supplier_registry
+from app.suppliers.rossko import RosskoAdapter
 
 __all__ = [
     "CsvSupplierAdapter",
     "HttpSupplierAdapter",
     "MockSupplierAdapter",
     "NormalizedSupplierOffer",
+    "RosskoAdapter",
     "SupplierAdapter",
     "SupplierAdapterError",
     "SupplierAuthError",

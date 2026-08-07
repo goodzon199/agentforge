@@ -90,6 +90,16 @@
 > бэкoff и учётом `Retry-After`, rate-limit (мин. интервал между запросами).
 > Конфигурация через `supplier.settings` (Rossko/Armtek-style JSON API);
 > поле `is_cross` у `SupplierOffer` (миграция `a1b2c3d4e5fb`).
+>
+> Sprint 3 (часть 6b) — Rossko live: подключён реальный поставщик Rossko
+> (`RosskoAdapter`, тип `rossko`) — SOAP-сервис `GetSearch`
+> (namespace `https://api.rossko.ru/`, `SOAPAction` = URL сервиса),
+> `KEY1`/`KEY2` в теле запроса, `delivery_id` + `address_id` из
+> `GetCheckoutDetails` аккаунта; парсинг `PartsList`/`stocks`/`crosses`
+> (выбор лучшего склада: мин. цена среди в наличии), карточки без остатков
+> пропускаются. Живые цены/остатки/сроки и кроссы; live e2e через пайплайн:
+> поиск → supplier policy → цены (Mapco 1612₽ → 2095.60₽ при марже 30%);
+> `/suppliers/{id}/test` = ok, 5 офферов.
 
 ---
 
@@ -101,14 +111,14 @@
 Поставщики mock/csv, Цены, Согласование продажи, Заказы) · Sprint 3.1 (Пилотные
 каналы) · 3.2 (Аналитика пилота) · 3.3 (Качество агентов) · 3.4 (PermissionEngine)
 · 3.5 (Company Policy Engine) · 3.6 (Real Supplier Integration: HTTP-адаптер
-с auth/search/crosses/остатками/ошибками/retry/rate-limit).
+с auth/search/crosses/остатками/ошибками/retry/rate-limit + **Rossko live**
+через `RosskoAdapter`/SOAP GetSearch — реальные цены и остатки в пайплайне).
 
-**Sprint 3.7 — Настройка реального поставщика** *(не сделано — следующий
-кандидат)*: подключить конкретного поставщика (Rossko/Armtek) к
-`HttpSupplierAdapter` — заполнить `base_url`, схему `keys`, auth-креды;
-прогнать через `/suppliers/{id}/test` и первые живые заявки; подобрать
-`offers_key`/`crosses_key` под реальный ответ API. Веха: система перестаёт
-быть тестовым контуром и работает на реальных данных.
+**Sprint 3.7 — Живой заказ у Rossko** *(не сделано — следующий кандидат)*:
+`RosskoAdapter` дорабатывается до `GetCheckout`/`GetOrders` — оформление
+реального заказа поставщику из конвертированного `Order` (адрес/доставка,
+реквизиты из `GetCheckoutDetails`), статусы заказа из `GetOrders`.
+Веха: платформа не только ищет и продаёт, но и **закупает**.
 
 **Sprint 4 — «Агентство агентов»** *(не сделано)*: выделение универсальных
 компонентов из вертикального продукта — Agent Runtime, Orchestrator, Tool Registry,
@@ -122,7 +132,27 @@ Beauty Pack (Reception/Booking/Sales/Reminder) и RealEstate Pack
 
 ## Что сделано (по порядку, последнее сверху)
 
-1. **feat/supplier-http-adapter** — реальный поставщик через `SupplierAdapter`:
+1. **feat/rossko-adapter** — реальный поставщик Rossko в платформе:
+   - `suppliers/rossko.py` — `RosskoAdapter` (тип `rossko`): SOAP 1.1
+     `GetSearch` (namespace `https://api.rossko.ru/`, `SOAPAction` = URL
+     сервиса — выявлено по WSDL), `KEY1`/`KEY2` в теле, `text = brand +
+     article`, `delivery_id` + опциональный `address_id` (оба — из
+     `GetCheckoutDetails` аккаунта). Парсинг `PartsList/Part/stocks/stock`
+     namespace-агностично (`_local`), кроссы `crosses/Part` → `is_cross=True`.
+   - **Выбор склада**: среди складов с остатком (count>0) — мин. цена, при
+     равенстве — мин. срок; карточки без `stocks` не котируются.
+   - **Ошибки по live-ответам**: `success=false` + `message` →
+     `SupplierAuthError` (ключ/авторизац), `SupplierRateLimitError` (лимит),
+     иначе `SupplierResponseError`; SOAP Fault → `SupplierResponseError`.
+     Ретраи транзиентных (408/425/429/5xx) с бэкoff, rate-limit `min_interval`
+     (лимит Rossko: 300 поисков/мин).
+   - Live: поставщик `rossko--live` (ключи в `supplier.settings`, не в коде),
+     `/test` → ok, 5 офферов; e2e заявка P06089: поиск completed
+     (2 поставщика), цены (Mapco 1612₽ → 2095.60₽ при марже 30%).
+   - pytest **249 passed** (+16: auth/поиск/склады/кроссы/ошибки/retry/
+     rate-limit/healthcheck на фейковом SOAP-сервере).
+
+2. **feat/supplier-http-adapter** — реальный поставщик через `SupplierAdapter`:
    - `suppliers/http.py` — `HttpSupplierAdapter` (тип `http`): HTTP-запросы
      к Rossko/Armtek-style JSON API. Авторизация `api_key`/`bearer`/`basic`,
      поиск по артикулу/бренду, **кроссы** (`data.crosses` расширяются в

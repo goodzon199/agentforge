@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import threading
 import time
 from decimal import Decimal
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 
@@ -22,48 +19,12 @@ from app.suppliers import (
     supplier_registry,
 )
 
-Behaviour = Callable[[str], tuple[int, Any, dict[str, str]]]
-
-
-class _FakeServerHandler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:
-        self.server.last_path = self.path  # type: ignore[attr-defined]
-        self.server.last_headers = dict(self.headers)  # type: ignore[attr-defined]
-        status, payload, headers = self.server.behaviour(self.path)  # type: ignore[attr-defined]
-        body = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        for key, value in headers.items():
-            self.send_header(key, value)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *args: Any) -> None:
-        pass
-
-
-@pytest.fixture
-def fake_server() -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _FakeServerHandler)
-    server.behaviour: Behaviour = lambda path: (200, {}, {})  # type: ignore[attr-defined]
-    server.last_path = ""  # type: ignore[attr-defined]
-    server.last_headers: dict[str, str] = {}  # type: ignore[attr-defined]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        yield server
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
-
 
 def _run(coro):
     return asyncio.run(coro)
 
 
-def _settings(server: ThreadingHTTPServer, **overrides: Any) -> dict[str, Any]:
+def _settings(server, **overrides: Any) -> dict[str, Any]:
     base = {
         "base_url": f"http://127.0.0.1:{server.server_port}",
         "search_path": "/search",
@@ -111,10 +72,9 @@ def test_http_adapter_requires_base_url():
 
 
 def test_search_normalizes_offers(fake_server):
-    def behaviour(path: str):
+    def behaviour(path: str, body: str, headers: dict[str, str]):
         calls.append(path)
-        payload = {"data": {"offers": [_offer()]}}
-        return 200, payload, {}
+        return 200, {"data": {"offers": [_offer()]}}, {}
 
     calls: list[str] = []
     fake_server.behaviour = behaviour
@@ -139,14 +99,14 @@ def test_search_normalizes_offers(fake_server):
 
 
 def test_search_sends_api_key_header(fake_server):
-    fake_server.behaviour = lambda path: (200, {"data": {"offers": [_offer()]}}, {})
+    fake_server.behaviour = lambda path, body, headers: (200, {"data": {"offers": [_offer()]}}, {})
     adapter = HttpSupplierAdapter(settings=_settings(fake_server))
     _run(adapter.search(SupplierSearchQuery(article="P06089")))
     assert fake_server.last_headers.get("X-Api-Key") == "secret"
 
 
 def test_search_sends_bearer_token(fake_server):
-    fake_server.behaviour = lambda path: (200, {"data": {"offers": [_offer()]}}, {})
+    fake_server.behaviour = lambda path, body, headers: (200, {"data": {"offers": [_offer()]}}, {})
     settings = _settings(
         fake_server, auth={"mode": "bearer", "token": "tok123"}
     )
@@ -156,7 +116,7 @@ def test_search_sends_bearer_token(fake_server):
 
 
 def test_search_auth_error_401(fake_server):
-    fake_server.behaviour = lambda path: (401, {"error": "unauthorized"}, {})
+    fake_server.behaviour = lambda path, body, headers: (401, {"error": "unauthorized"}, {})
     adapter = HttpSupplierAdapter(settings=_settings(fake_server, max_retries=1))
     with pytest.raises(SupplierAuthError) as exc:
         _run(adapter.search(SupplierSearchQuery(article="P06089")))
@@ -173,7 +133,7 @@ def test_search_expands_crosses_as_is_cross(fake_server):
             "crosses": [_offer("GDB2119", brand="TRW", price="6100.00", quantity=3, delivery_days=1)],
         }
     }
-    fake_server.behaviour = lambda path: (200, payload, {})
+    fake_server.behaviour = lambda path, body, headers: (200, payload, {})
     adapter = HttpSupplierAdapter(settings=_settings(fake_server))
 
     offers = _run(adapter.search(SupplierSearchQuery(article="P06089")))
@@ -191,7 +151,7 @@ def test_search_expands_crosses_as_is_cross(fake_server):
 
 def test_search_without_crosses_key_ignores_analogs(fake_server):
     payload = {"data": {"offers": [_offer()], "crosses": [_offer("GDB2119")]}}
-    fake_server.behaviour = lambda path: (200, payload, {})
+    fake_server.behaviour = lambda path, body, headers: (200, payload, {})
     adapter = HttpSupplierAdapter(
         settings=_settings(fake_server, crosses_key=None)
     )
@@ -203,14 +163,14 @@ def test_search_without_crosses_key_ignores_analogs(fake_server):
 
 
 def test_search_parse_error_on_bad_structure(fake_server):
-    fake_server.behaviour = lambda path: (200, {"data": {"offers": {"not": "a list"}}}, {})
+    fake_server.behaviour = lambda path, body, headers: (200, {"data": {"offers": {"not": "a list"}}}, {})
     adapter = HttpSupplierAdapter(settings=_settings(fake_server))
     with pytest.raises(SupplierParseError):
         _run(adapter.search(SupplierSearchQuery(article="P06089")))
 
 
 def test_search_raises_parse_error_when_offer_missing_article(fake_server):
-    fake_server.behaviour = lambda path: (200, {"data": {"offers": [{"brand": "BREMBO"}]}}, {})
+    fake_server.behaviour = lambda path, body, headers: (200, {"data": {"offers": [{"brand": "BREMBO"}]}}, {})
     adapter = HttpSupplierAdapter(settings=_settings(fake_server))
     with pytest.raises(SupplierParseError):
         _run(adapter.search(SupplierSearchQuery(article="P06089")))
@@ -218,7 +178,9 @@ def test_search_raises_parse_error_when_offer_missing_article(fake_server):
 
 def test_search_response_error_after_retries(fake_server):
     calls: list[int] = []
-    fake_server.behaviour = lambda path: (calls.append(503) or (503, {"error": "busy"}, {}))
+    fake_server.behaviour = (
+        lambda path, body, headers: (calls.append(503) or (503, {"error": "busy"}, {}))
+    )
     adapter = HttpSupplierAdapter(settings=_settings(fake_server, max_retries=2))
     with pytest.raises(SupplierResponseError) as exc:
         _run(adapter.search(SupplierSearchQuery(article="P06089")))
@@ -245,7 +207,7 @@ def test_search_connection_error(fake_server):
 def test_search_retries_500_then_succeeds(fake_server):
     calls: list[int] = []
 
-    def behaviour(path: str):
+    def behaviour(path: str, body: str, headers: dict[str, str]):
         calls.append(1)
         if len(calls) == 1:
             return 500, {"error": "boom"}, {}
@@ -264,7 +226,7 @@ def test_search_retries_500_then_succeeds(fake_server):
 def test_search_429_honors_retry_after_then_succeeds(fake_server):
     calls: list[int] = []
 
-    def behaviour(path: str):
+    def behaviour(path: str, body: str, headers: dict[str, str]):
         calls.append(1)
         if len(calls) == 1:
             return 429, {"error": "slow down"}, {"Retry-After": "0"}
@@ -280,7 +242,9 @@ def test_search_429_honors_retry_after_then_succeeds(fake_server):
 
 
 def test_search_429_exhausts_retries_raises_rate_limit(fake_server):
-    fake_server.behaviour = lambda path: (429, {"error": "slow down"}, {"Retry-After": "0"})
+    fake_server.behaviour = (
+        lambda path, body, headers: (429, {"error": "slow down"}, {"Retry-After": "0"})
+    )
     adapter = HttpSupplierAdapter(settings=_settings(fake_server, max_retries=1))
     with pytest.raises(SupplierRateLimitError):
         _run(adapter.search(SupplierSearchQuery(article="P06089")))
@@ -290,7 +254,7 @@ def test_search_429_exhausts_retries_raises_rate_limit(fake_server):
 
 
 def test_search_timeout(fake_server):
-    def behaviour(path: str):
+    def behaviour(path: str, body: str, headers: dict[str, str]):
         time.sleep(1.0)
         return 200, {"data": {"offers": [_offer()]}}, {}
 
@@ -304,7 +268,7 @@ def test_search_timeout(fake_server):
 
 
 def test_rate_limit_min_interval_between_requests(fake_server):
-    fake_server.behaviour = lambda path: (200, {"data": {"offers": [_offer()]}}, {})
+    fake_server.behaviour = lambda path, body, headers: (200, {"data": {"offers": [_offer()]}}, {})
     adapter = HttpSupplierAdapter(
         settings=_settings(fake_server, min_interval=0.12, max_retries=0)
     )
@@ -322,12 +286,12 @@ def test_rate_limit_min_interval_between_requests(fake_server):
 
 
 def test_healthcheck_true_on_2xx(fake_server):
-    fake_server.behaviour = lambda path: (200, {"status": "ok"}, {})
+    fake_server.behaviour = lambda path, body, headers: (200, {"status": "ok"}, {})
     adapter = HttpSupplierAdapter(settings=_settings(fake_server))
     assert _run(adapter.healthcheck()) is True
 
 
 def test_healthcheck_false_on_error(fake_server):
-    fake_server.behaviour = lambda path: (503, {"error": "down"}, {})
+    fake_server.behaviour = lambda path, body, headers: (503, {"error": "down"}, {})
     adapter = HttpSupplierAdapter(settings=_settings(fake_server))
     assert _run(adapter.healthcheck()) is False

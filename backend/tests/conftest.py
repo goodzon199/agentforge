@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any, Callable
+
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -7,6 +12,63 @@ from sqlalchemy.pool import StaticPool
 
 from app.core.database import Base, get_db
 from app.core.seeding import seed_demo
+
+Behaviour = Callable[[str], tuple[int, Any, dict[str, str]]]
+
+
+class _FakeServerHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        self._serve()
+
+    def do_POST(self) -> None:
+        self._serve()
+
+    def _serve(self) -> None:
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        self.server.last_method = self.command  # type: ignore[attr-defined]
+        self.server.last_path = self.path  # type: ignore[attr-defined]
+        self.server.last_headers = dict(self.headers)  # type: ignore[attr-defined]
+        self.server.last_body = self.rfile.read(length).decode("utf-8", "replace")  # type: ignore[attr-defined]
+        status, payload, headers = self.server.behaviour(  # type: ignore[attr-defined]
+            self.path, self.server.last_body, dict(self.headers)
+        )
+        if isinstance(payload, str):
+            body = payload.encode("utf-8")
+            ctype = headers.pop("Content-Type", "text/xml; charset=utf-8")
+        else:
+            body = json.dumps(payload).encode("utf-8")
+            ctype = "application/json"
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        for key, value in headers.items():
+            self.send_header(key, value)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def log_message(self, *args: Any) -> None:
+        pass
+
+
+@pytest.fixture
+def fake_server() -> ThreadingHTTPServer:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _FakeServerHandler)
+    server.behaviour: Behaviour = lambda path, body, headers: (200, {}, {})  # type: ignore[attr-defined]
+    server.last_method = ""  # type: ignore[attr-defined]
+    server.last_path = ""  # type: ignore[attr-defined]
+    server.last_headers: dict[str, str] = {}  # type: ignore[attr-defined]
+    server.last_body = ""  # type: ignore[attr-defined]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 @pytest.fixture
