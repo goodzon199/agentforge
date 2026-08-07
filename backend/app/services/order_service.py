@@ -8,8 +8,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.risk import requires_approval_for, risk_for
-from app.models import AgentAction, Conversation, Order, PartRequest, Quote
+from app.core import permissions
+from app.models import AgentAction, Company, Conversation, Order, PartRequest, Quote
 from app.models.enums import AgentActionStatus, OrderStatus, QuoteStatus
 from app.services.sales_service import (
     ConflictError,
@@ -176,8 +176,6 @@ class OrderService:
             target_id=str(quote.id),
             input_data={"quote_id": str(quote.id)},
             result_data={"order_id": str(order.id), "order_number": order.order_number},
-            risk=risk_for("create_order"),
-            requires=requires_approval_for("create_order"),
             status=AgentActionStatus.executed,
         )
 
@@ -262,6 +260,7 @@ class OrderService:
         requires: bool | None = None,
         status: AgentActionStatus = AgentActionStatus.pending,
     ) -> AgentAction:
+        company = self.db.get(Company, company_id) if company_id else None
         action = AgentAction(
             company_id=company_id,
             agent_id=agent_id,
@@ -271,9 +270,13 @@ class OrderService:
             target_id=target_id,
             input_data=input_data,
             result_data=result_data,
-            risk_level=risk if risk is not None else risk_for(action_type),
+            risk_level=(
+                risk if risk is not None else permissions.risk_for(action_type, target_type, company)
+            ),
             requires_approval=(
-                requires if requires is not None else requires_approval_for(action_type)
+                requires
+                if requires is not None
+                else permissions.requires_approval_for(action_type, target_type, company)
             ),
             status=status,
             executed_at=_now() if status == AgentActionStatus.executed else None,

@@ -58,12 +58,46 @@
 > A/B-сравнением качества, `LLMUsage` — стоимость каждого вызова,
 > API `/agents/quality` и `/prompts`, UI-блоки «Качество агентов» и
 > «Версии промптов» с активацией.
+>
+> Sprint 3 (часть 4) — PermissionEngine: единый механизм безопасности для
+> любого агента — `(agent, company, action, resource, context)` →
+> `{allowed, requires_approval, risk_level, reason}`. Политики по умолчанию
+> в registry (action+resource), компания переопределяет риск через
+> `company.settings.permissions` (`send_customer_message: low` →
+> SalesAgent отправляет автономно). Вся платформа говорит через движок:
+> Sales/Order/Conversation flows и аудит `AgentAction` берут риск и
+> require-approval из одного источника; API `/permissions/evaluate`,
+> `/permissions/policies` (GET/PUT).
 
 ---
 
 ## Что сделано (по порядку, последнее сверху)
 
-1. **feat/agent-quality** — качество агентов и версии промптов:
+1. **feat/permission-engine** — единый механизм безопасности:
+   - `core/permissions.py`: `PermissionEngine` — `evaluate(agent, company,
+     action, resource, context)` → `PermissionDecision{allowed,
+     requires_approval, risk_level, reason}`; registry `DEFAULT_POLICIES`
+     keyed `(action, resource)` (LOW автономно / MEDIUM согласование / HIGH
+     только человек); компания переопределяет риск через
+     `company.settings.permissions` (`{"send_customer_message": "low"}` или
+     `{"give_discount:quote": "medium"}`, неверные значения игнорируются).
+     Неизвестное действие → MEDIUM.
+   - Полный переход: `core/risk.py` удалён; sales/order/conversation flows и
+     `_record_action` берут риск и `requires_approval` из движка
+     (resource = target_type, company из БД). `request_send` принимает
+     решение через `evaluate()`: MEDIUM → ApprovalRequest (как раньше),
+     override LOW → авто-отправка через общий `_perform_send`
+     (QuoteGuard проверяется всегда).
+   - API `/permissions`: `POST /evaluate` (контракт), `GET /policies`
+     (эффективные политики с source default/company), `PUT /policies`
+     (переопределение, валидация low/medium/high, пустой map сбрасывает).
+   - Тесты: `tests/test_permission_engine.py` — 16 шт (unit-движок, API,
+     e2e авто-отправка при override LOW, регрессия MEDIUM → согласование).
+     pytest **195 passed**. Live: `GET/POST /permissions` работают,
+     `send_supplier_order` → `{allowed:false, requires_approval:true,
+     risk_level:"HIGH", reason:"…только человек…"}`.
+
+2. **feat/agent-quality** — качество агентов и версии промптов:
    - `AgentFeedback` (accept / edit / reject / incorrect_fact) превращён в
      метрику: `GET /agents/quality?days=N` возвращает по каждому агенту
      задачи, success_rate, avg_response_seconds, человеческую обратную связь

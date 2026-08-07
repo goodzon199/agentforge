@@ -8,13 +8,14 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core import permissions
 from app.core.config import settings
-from app.core.risk import requires_approval_for, risk_for
 from app.models import (
     Agent,
     AgentAction,
     AgentFeedback,
     ApprovalRequest,
+    Company,
     Conversation,
     ConversationMessage,
     Quote,
@@ -212,22 +213,38 @@ class SalesService:
             target_type="quote",
             target_id=str(quote.id),
             input_data={"quote_id": str(quote.id), "message": final},
-            risk=risk_for("send_customer_message"),
-            requires=requires_approval_for("send_customer_message"),
             status=AgentActionStatus.pending,
             idempotency_key=key,
         )
-        approval = self._create_approval(quote, action, final, agent_id)
-        quote.status = QuoteStatus.pending_approval
+        decision = permissions.evaluate(
+            agent=agent_id,
+            company=self.db.get(Company, quote.company_id),
+            action="send_customer_message",
+            resource="quote",
+            context={"quote_id": str(quote.id), "conversation_id": str(quote.conversation_id)},
+        )
+        if decision.requires_approval:
+            approval = self._create_approval(quote, action, final, agent_id)
+            quote.status = QuoteStatus.pending_approval
 
-        if approve_now:
-            return self.approve(approval.id, user)
+            if approve_now:
+                return self.approve(approval.id, user)
 
+            self.db.commit()
+            return {
+                "approval_id": str(approval.id),
+                "status": ApprovalStatus.pending.value,
+                "message_sent": False,
+                "already_executed": False,
+                "quote_id": str(quote.id),
+            }
+
+        # Company policy allows this action (LOW): the agent sends on its own.
+        self._perform_send(quote, final, action=action)
         self.db.commit()
         return {
-            "approval_id": str(approval.id),
-            "status": ApprovalStatus.pending.value,
-            "message_sent": False,
+            "status": QuoteStatus.sent.value,
+            "message_sent": True,
             "already_executed": False,
             "quote_id": str(quote.id),
         }
@@ -255,9 +272,38 @@ class SalesService:
         if not final:
             raise ConflictError("Нет текста сообщения для отправки.")
 
-        # "При send обязательно повторно проверяем QuoteGuard. Не доверяем
-        # предыдущей проверке." — a manager or a race may have changed the text.
-        guard = quote_guard.check(final, quote.items or [], self._purchase_prices(quote))
+        action = self.db.get(AgentAction, approval.action_id) if approval.action_id else None
+        approval.status = ApprovalStatus.approved
+        approval.approved_by_user_id = user.id
+        approval.approved_at = _now()
+
+        result = self._perform_send(quote, final, approval=approval, action=action)
+        self._record_feedback(quote, approval, action, final)
+        self.db.commit()
+
+        return {
+            "status": ApprovalStatus.approved.value,
+            "message_sent": True,
+            "message_id": result["message_id"],
+            "approval_id": str(approval.id),
+            "already_approved": False,
+        }
+
+    def _perform_send(
+        self,
+        quote: Quote,
+        message: str,
+        *,
+        approval: ApprovalRequest | None = None,
+        action: AgentAction | None = None,
+    ) -> dict[str, Any]:
+        """Actually deliver the sales message to the customer.
+
+        Shared by the manager-approval path and the PermissionEngine
+        auto-send path (LOW risk). QuoteGuard is always re-checked — we
+        never trust a previously validated text.
+        """
+        guard = quote_guard.check(message, quote.items or [], self._purchase_prices(quote))
         if not guard.passed:
             raise GuardBlockedError(guard.to_dict())
 
@@ -267,46 +313,32 @@ class SalesService:
         if conversation is None:
             raise ConflictError("Диалог клиента не найден.")
 
-        message, _ = ConversationService(self.db).add_message(
+        msg, _ = ConversationService(self.db).add_message(
             conversation,
-            content=final,
+            content=message,
             sender_type="agent",
             sender_id=None,
             structured_data={
                 "kind": "sales",
                 "quote_id": str(quote.id),
-                "approval_id": str(approval.id),
-                "action_id": str(approval.action_id) if approval.action_id else None,
+                "approval_id": str(approval.id) if approval else None,
+                "action_id": str(action.id) if action else None,
             },
         )
 
         quote.status = QuoteStatus.sent
-        quote.final_message = final
+        quote.final_message = message
         quote.sent_at = _now()
 
-        approval.status = ApprovalStatus.approved
-        approval.approved_by_user_id = user.id
-        approval.approved_at = _now()
-
-        action = self.db.get(AgentAction, approval.action_id) if approval.action_id else None
         if action is not None:
             action.status = AgentActionStatus.executed
             action.executed_at = _now()
             action.result_data = {
-                "message_id": str(message.id),
-                "approval_id": str(approval.id),
+                "message_id": str(msg.id),
+                "approval_id": str(approval.id) if approval else None,
             }
 
-        self._record_feedback(quote, approval, action, final)
-        self.db.commit()
-
-        return {
-            "status": ApprovalStatus.approved.value,
-            "message_sent": True,
-            "message_id": str(message.id),
-            "approval_id": str(approval.id),
-            "already_approved": False,
-        }
+        return {"message_id": str(msg.id), "approval_id": str(approval.id) if approval else None}
 
     def reject(
         self, approval_id: uuid.UUID, user, reason: str = ""
@@ -521,6 +553,7 @@ class SalesService:
         status: AgentActionStatus = AgentActionStatus.pending,
         idempotency_key: str | None = None,
     ) -> AgentAction:
+        company = self.db.get(Company, company_id) if company_id else None
         action = AgentAction(
             company_id=company_id,
             agent_id=agent_id,
@@ -530,9 +563,13 @@ class SalesService:
             target_id=target_id,
             input_data=input_data,
             result_data=result_data,
-            risk_level=risk if risk is not None else risk_for(action_type),
+            risk_level=(
+                risk if risk is not None else permissions.risk_for(action_type, target_type, company)
+            ),
             requires_approval=(
-                requires if requires is not None else requires_approval_for(action_type)
+                requires
+                if requires is not None
+                else permissions.requires_approval_for(action_type, target_type, company)
             ),
             status=status,
             idempotency_key=idempotency_key,

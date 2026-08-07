@@ -7,8 +7,14 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.risk import risk_for
-from app.models import AgentAction, Conversation, ConversationMessage, Customer
+from app.core import permissions
+from app.models import (
+    AgentAction,
+    Company,
+    Conversation,
+    ConversationMessage,
+    Customer,
+)
 from app.models.enums import AgentActionStatus, ConversationMode
 from app.services.task_service import TaskService
 
@@ -57,6 +63,11 @@ class ConversationService:
             conversation.assigned_user_id = user_id
         conversation.updated_at = datetime.now(timezone.utc)
 
+        company = (
+            self.db.get(Company, conversation.company_id)
+            if conversation.company_id
+            else None
+        )
         self.db.add(
             AgentAction(
                 company_id=conversation.company_id,
@@ -65,7 +76,7 @@ class ConversationService:
                 target_id=str(conversation.id),
                 input_data={"conversation_id": str(conversation.id)},
                 result_data={"mode": mode.value},
-                risk_level=risk_for(action_type),
+                risk_level=permissions.risk_for(action_type, "conversation", company),
                 status=AgentActionStatus.executed,
                 executed_at=datetime.now(timezone.utc),
             )
