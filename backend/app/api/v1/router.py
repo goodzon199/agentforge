@@ -4,6 +4,7 @@ from app.api.deps import get_current_user
 from app.api.v1 import (
     actions,
     agents,
+    analytics,
     approvals,
     auth,
     chat,
@@ -28,6 +29,7 @@ api_router.include_router(chat.router)
 # Resource routers require a valid JWT.
 for module in (
     dashboard,
+    analytics,
     companies,
     agents,
     tasks,

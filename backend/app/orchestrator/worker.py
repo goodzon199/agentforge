@@ -40,10 +40,19 @@ class QueueWorker:
         self._stop.set()
 
     def _run(self) -> None:
+        tick = 0
         while not self._stop.is_set():
             db = SessionLocal()
             try:
                 orchestrator.poll(db)
+                # Every ~5s sweep for hung tasks / search runs (watchdog).
+                tick += 1
+                if tick % 100 == 0:
+                    from app.services.parts_search_service import PartsSearchService
+                    from app.services.task_service import TaskService
+
+                    TaskService(db).mark_stale_tasks()
+                    PartsSearchService(db).mark_stale_runs()
             except Exception:  # pragma: no cover - worker must survive errors
                 logger.exception("Ошибка в воркере очереди")
                 db.rollback()

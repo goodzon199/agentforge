@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -13,6 +14,47 @@ from app.models.enums import TaskPriority, TaskStatus
 class TaskService:
     def __init__(self, db: Session) -> None:
         self.db = db
+
+    def mark_stale_tasks(
+        self,
+        *,
+        max_seconds: float | None = None,
+        now: datetime | None = None,
+    ) -> int:
+        """Watchdog: fail tasks stuck in a running state for too long.
+
+        A task may hang (dead worker, stuck supplier). This sweeps it to
+        ``failed`` so nothing waits forever and the dashboard can show the
+        task-timeout rate. Returns how many tasks were failed.
+        """
+        from app.core.config import settings
+
+        limit = max_seconds if max_seconds is not None else settings.task_max_running_seconds
+        threshold = (now or datetime.now(timezone.utc)) - timedelta(seconds=limit)
+
+        stmt = (
+            select(Task)
+            .where(Task.status.in_([TaskStatus.queued, TaskStatus.running]))
+            .where(Task.started_at.isnot(None))
+            .where(Task.started_at < threshold)
+        )
+        tasks = list(self.db.scalars(stmt).unique().all())
+        for task in tasks:
+            task.status = TaskStatus.failed
+            task.error = f"task_timeout: превышен лимит {limit:.0f}с на выполнение"
+            task.completed_at = datetime.now(timezone.utc)
+            self.db.add(
+                TaskEvent(
+                    task_id=task.id,
+                    source="orchestrator",
+                    level="error",
+                    message=task.error,
+                    meta={"reason": "task_timeout", "max_seconds": limit},
+                )
+            )
+        if tasks:
+            self.db.commit()
+        return len(tasks)
 
     def create(
         self,

@@ -52,6 +52,21 @@ class Settings(BaseSettings):
     # Срок жизни запроса на согласование: после expiry approve/reject нельзя.
     approval_ttl_hours: float = 24.0
 
+    # Pilot analytics + SLA (sprint 3.1)
+    # Целевое время на каждый этап pipeline (секунды). Используется в дашборде
+    # аналитики для доли задач, укладывающихся в SLA.
+    pipeline_sla_seconds: dict[str, float] = {
+        "process_customer_message": 5.0,
+        "search_parts": 15.0,
+        "pricing_parts": 2.0,
+        "sales_draft": 5.0,
+    }
+    # Watchdog: задача, зависшая в статусе running дольше этого срока,
+    # помечается failed (task_timeout), чтобы ничего не висело вечно.
+    task_max_running_seconds: float = 60.0
+    # Аналогично для поискового запуска (supplier_failed).
+    search_run_max_running_seconds: float = 60.0
+
     # E-mail (SMTP)
     smtp_host: str = ""
     smtp_port: int = 1025

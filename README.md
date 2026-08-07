@@ -44,12 +44,45 @@
 > прогоняется через весь pipeline; human takeover — `conversation.mode`
 > (ai_active / human_active / paused / closed), при перехвате AI замолкает,
 > страница «Веб-чат» для демо.
+>
+> Sprint 3 (часть 2) — Аналитика пилота: деньги на дашборде — выручка и
+> прибыль из заказов, конверсия (запросы → КП → заказ), SLA-метрики
+> конвейера (avg/p95/% в SLA по каждой стадии), латентность поставщиков,
+> счётчики LLM и watchdog: зависшие задачи/поиски помечаются failed
+> (task_timeout / supplier_failed) и попадают в метрики.
 
 ---
 
 ## Что сделано (по порядку, последнее сверху)
 
-1. **feat/pilot-webchat-takeover** — первый реальный канал + управление диалогом:
+1. **feat/pilot-analytics** — аналитика пилота: деньги и SLA на дашборде:
+   - `GET /analytics/pilot?days=N` под JWT (scoped по компании): запросы,
+     диалоги, `ai_handled` (AI отвечал в диалоге), `handed_to_manager` и
+     `takeover_rate` (по `AgentAction.conversation_takeover`), заявки,
+     КП отправлено/принято, заказы, выручка и прибыль (из `Order.order_total`
+     и снимка items с `margin_percent`), средний ответ AI
+     (`avg_response_seconds`), pipeline-стадии с SLA, поставщики и LLM.
+   - Pipeline/SLA: `core/config.py` — `pipeline_sla_seconds`
+     (process_customer_message 5s / search_parts 15s / pricing_parts 2s /
+     sales_draft 5s), `task_max_running_seconds` 60,
+     `search_run_max_running_seconds` 60. Для каждой стадии считаются count,
+     avg/p95 длительности, % в SLA и число failed.
+   - Watchdog в `orchestrator/worker.py` (каждые ~5с):
+     `TaskService.mark_stale_tasks` → зависшие queued/running-задачи помечаются
+     failed с `error="task_timeout: …"` + TaskEvent;
+     `PartsSearchService.mark_stale_runs` → зависшие поиски failed с
+     `error="supplier_failed: …"`, `PartRequest` возвращается в
+     `ready_for_search`. Таймауты задач видны в метрике `task_timeouts`.
+   - `llm/client.py`: процессные счётчики вызовов/отказов (`stats()`,
+     `available`) — видны в блоке LLM.
+   - Frontend: на главной странице блок «Пилотная аналитика · 7 дней» —
+     выручка/прибыль/заказы/запросы/перехват (StatsCard), конвейер с SLA
+     (avg/p95/% в SLA по стадиям), поставщики и LLM.
+   - Тесты 171/171 (+5): пустая витрина, деньги+конверсия+время ответа,
+     метрики перехвата, watchdog по задачам и по поискам. Live E2E: старый
+     заказ в аналитике (7930.00 / прибыль 3870.00), pipeline со стадиями,
+     watchdog посчитал таймауты, фронт собран и отдаёт 200.
+2. **feat/pilot-webchat-takeover** — первый реальный канал + управление диалогом:
    - Публичный web-chat: `POST /public/chat/start` (ищет компанию по
      `companies.public_token`, находит-или-создаёт Customer source=webchat и
      Conversation channel=webchat; тот же `client_key` резюмирует диалог),

@@ -342,3 +342,48 @@ export type OrderCreateResult = {
   status: string;
   already_converted: boolean;
 };
+
+export type PipelineStageStats = {
+  objective: string;
+  count: number;
+  failed: number;
+  avg_seconds: number | null;
+  p95_seconds: number | null;
+  sla_seconds: number;
+  on_sla_pct: number | null;
+};
+
+export type SupplierStats = {
+  attempts_total: number;
+  attempts_failed: number;
+  failure_rate: number;
+  avg_latency_ms: number | null;
+  p95_latency_ms: number | null;
+};
+
+export type LlmStats = {
+  calls: number;
+  failures: number;
+  failure_rate: number;
+  available: boolean;
+};
+
+export type PilotAnalytics = {
+  period_days: number;
+  requests_total: number;
+  conversations_total: number;
+  ai_handled: number;
+  handed_to_manager: number;
+  takeover_rate: number;
+  part_requests_total: number;
+  quotes_sent: number;
+  quotes_accepted: number;
+  orders_total: number;
+  revenue: string;
+  gross_profit: string;
+  avg_response_seconds: number | null;
+  pipeline: PipelineStageStats[];
+  suppliers: SupplierStats;
+  llm: LlmStats;
+  task_timeouts: number;
+};

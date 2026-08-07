@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -143,6 +143,39 @@ class PartsSearchService:
         return self._result(part_request, run)
 
     # --- Reads -------------------------------------------------------------
+
+    def mark_stale_runs(self, *, max_seconds: float | None = None) -> int:
+        """Watchdog: fail search runs stuck in ``running`` (dead worker).
+
+        Mirrors the supplier-timeout safety net at the run level so a search
+        can never hang forever. Returns how many runs were marked failed.
+        """
+        from app.core.config import settings
+
+        limit = (
+            max_seconds
+            if max_seconds is not None
+            else settings.search_run_max_running_seconds
+        )
+        threshold = _now() - timedelta(seconds=limit)
+
+        stmt = (
+            select(SupplierSearchRun)
+            .where(SupplierSearchRun.status == SupplierSearchStatus.running)
+            .where(SupplierSearchRun.started_at.isnot(None))
+            .where(SupplierSearchRun.started_at < threshold)
+        )
+        runs = list(self.db.scalars(stmt).unique().all())
+        for run in runs:
+            run.status = SupplierSearchStatus.failed
+            run.error = "supplier_failed: превышен лимит времени на поиск"
+            run.completed_at = _now()
+            part_request = self.db.get(PartRequest, run.part_request_id)
+            if part_request is not None and part_request.status == PartRequestStatus.searching:
+                part_request.status = PartRequestStatus.ready_for_search
+        if runs:
+            self.db.commit()
+        return len(runs)
 
     def list_offers(self, part_request_id: uuid.UUID) -> list[SupplierOffer]:
         stmt = (
