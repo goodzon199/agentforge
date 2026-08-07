@@ -27,6 +27,7 @@ class UserService:
         password: str,
         full_name: str = "",
         is_superuser: bool = False,
+        company_id=None,
     ) -> User:
         user = User(
             email=email.lower(),
@@ -34,6 +35,7 @@ class UserService:
             hashed_password=hash_password(password),
             is_superuser=is_superuser,
             is_active=True,
+            company_id=company_id,
         )
         self.db.add(user)
         return user

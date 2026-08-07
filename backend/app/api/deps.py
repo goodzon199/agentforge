@@ -13,6 +13,8 @@ from app.services.conversation_service import ConversationService
 from app.services.part_request_service import PartRequestService
 from app.services.parts_search_service import PartsSearchService
 from app.services.pricing_service import PricingService
+from app.services.quote_service import QuoteService
+from app.services.sales_service import SalesService
 from app.services.supplier_service import SupplierService
 from app.services.task_service import TaskService
 from app.services.user_service import UserService
@@ -46,6 +48,14 @@ def get_parts_search_service(db: Session = Depends(get_db)) -> PartsSearchServic
 
 def get_pricing_service(db: Session = Depends(get_db)) -> PricingService:
     return PricingService(db)
+
+
+def get_quote_service(db: Session = Depends(get_db)) -> QuoteService:
+    return QuoteService(db)
+
+
+def get_sales_service(db: Session = Depends(get_db)) -> SalesService:
+    return SalesService(db)
 
 
 def get_supplier_service(db: Session = Depends(get_db)) -> SupplierService:

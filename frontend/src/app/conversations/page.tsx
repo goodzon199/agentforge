@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import type {
+  Approval,
   Company,
   Conversation,
   ConversationDetail,
@@ -12,11 +13,14 @@ import type {
   MessageSent,
   PartQuote,
   PartRequest,
+  QuoteSendResult,
+  SalesDraft,
   SupplierOffer,
   SupplierSearchRun,
 } from "@/lib/types";
 import { EmptyState, ErrorBox, Loading, SectionHeader, StatusBadge } from "@/components/ui";
 import { PartRequestPanel } from "@/components/conversations/PartRequestPanel";
+import { QuoteSalesPanel } from "@/components/conversations/QuoteSalesPanel";
 
 const ACTIVE_STATUSES = ["collecting_data", "ready_for_search", "searching", "quoted"];
 
@@ -38,6 +42,9 @@ export default function ConversationsPage() {
   const [searching, setSearching] = useState(false);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [salesDraft, setSalesDraft] = useState<SalesDraft | null>(null);
+  const [approvals, setApprovals] = useState<Approval[]>([]);
+  const [salesBusy, setSalesBusy] = useState(false);
 
   // Create-customer form
   const [showNew, setShowNew] = useState(false);
@@ -57,21 +64,39 @@ export default function ConversationsPage() {
       setOffers([]);
       setSearchRuns([]);
       setQuote(null);
+      setSalesDraft(null);
+      setApprovals([]);
       return;
     }
     try {
-      const [loadedOffers, loadedRuns, loadedQuote] = await Promise.all([
+      const [loadedOffers, loadedRuns, loadedQuote, loadedApprovals] = await Promise.all([
         api.get<SupplierOffer[]>(`/part_requests/${active.id}/offers`),
         api.get<SupplierSearchRun[]>(`/part_requests/${active.id}/search-runs`),
         api.get<PartQuote>(`/part_requests/${active.id}/quote`),
+        api.get<Approval[]>("/approvals"),
       ]);
       setOffers(loadedOffers);
       setSearchRuns(loadedRuns);
       setQuote(loadedQuote);
+      setApprovals(loadedApprovals);
+      if (loadedQuote?.quote_id) {
+        try {
+          const loadedDraft = await api.get<SalesDraft>(
+            `/quotes/${loadedQuote.quote_id}/sales-draft`,
+          );
+          setSalesDraft(loadedDraft);
+        } catch {
+          setSalesDraft(null);
+        }
+      } else {
+        setSalesDraft(null);
+      }
     } catch {
       setOffers([]);
       setSearchRuns([]);
       setQuote(null);
+      setSalesDraft(null);
+      setApprovals([]);
     }
   }
 
@@ -93,6 +118,47 @@ export default function ConversationsPage() {
       await loadPartRequests(selected!.id);
     } finally {
       setSearching(false);
+    }
+  }
+
+  const currentApproval: Approval | null = salesDraft
+    ? approvals.find((a) => a.quote_id === salesDraft.quote_id) ?? null
+    : null;
+
+  async function sendForApproval(message: string) {
+    if (!salesDraft || salesBusy) return;
+    setSalesBusy(true);
+    try {
+      const result = await api.post<QuoteSendResult>(
+        `/quotes/${salesDraft.quote_id}/send`,
+        { message },
+      );
+      await loadPartRequests(selected!.id);
+    } finally {
+      setSalesBusy(false);
+    }
+  }
+
+  async function approveQuote(approvalId: string) {
+    if (salesBusy) return;
+    setSalesBusy(true);
+    try {
+      await api.post(`/approvals/${approvalId}/approve`, {});
+      await loadPartRequests(selected!.id);
+      await api.get<ConversationDetail>(`/conversations/${selected!.id}`).then(setSelected);
+    } finally {
+      setSalesBusy(false);
+    }
+  }
+
+  async function rejectQuote(approvalId: string) {
+    if (salesBusy) return;
+    setSalesBusy(true);
+    try {
+      await api.post(`/approvals/${approvalId}/reject`, { rejection_reason: "Отклонено менеджером" });
+      await loadPartRequests(selected!.id);
+    } finally {
+      setSalesBusy(false);
     }
   }
 
@@ -270,6 +336,14 @@ export default function ConversationsPage() {
                   quote={quote}
                   searching={searching}
                   onSearch={runSearch}
+                />
+                <QuoteSalesPanel
+                  draft={salesDraft}
+                  approval={currentApproval}
+                  busy={salesBusy}
+                  onSend={sendForApproval}
+                  onApprove={approveQuote}
+                  onReject={rejectQuote}
                 />
               </div>
 

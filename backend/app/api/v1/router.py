@@ -2,13 +2,16 @@ from fastapi import APIRouter, Depends
 
 from app.api.deps import get_current_user
 from app.api.v1 import (
+    actions,
     agents,
+    approvals,
     auth,
     companies,
     conversations,
     dashboard,
     logs,
     part_requests,
+    quotes,
     settings,
     suppliers,
     tasks,
@@ -27,6 +30,9 @@ for module in (
     settings,
     part_requests,
     suppliers,
+    approvals,
+    actions,
+    quotes,
 ):
     api_router.include_router(
         module.router,

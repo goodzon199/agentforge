@@ -115,6 +115,71 @@ def test_full_flow_dod(client, db_session):
     assert quote["best_article"] == "GDB2119"
     assert quote["best_total_price"] == "7930.00"
 
+    # 9. Pricing auto-created a Quote entity (sprint 2.5 sales funnel).
+    quote_id = quote["quote_id"]
+    draft = client.get(f"/api/v1/quotes/{quote_id}/sales-draft").json()
+    assert draft["status"] == "draft"
+    assert draft["ai_draft"]
+    assert draft["guard_status"] == "pass"
+    assert "GDB2119" in draft["ai_draft"]
+
+    # 10. A sales_draft hand-off task was created and completed inline.
+    tasks = client.get("/api/v1/tasks").json()
+    sales_tasks = [
+        t
+        for t in tasks
+        if t["objective"] == "sales_draft"
+        and t["input_data"].get("part_request_id") == part_request["id"]
+    ]
+    assert len(sales_tasks) == 1
+    assert sales_tasks[0]["status"] == "completed"
+
+    # 11. Sending the draft requires approval; nothing reaches the customer yet.
+    send = client.post(
+        f"/api/v1/quotes/{quote_id}/send", json={"message": draft["ai_draft"]}
+    )
+    assert send.status_code == 200
+    approval_id = send.json()["approval_id"]
+    assert send.json()["message_sent"] is False
+
+    detail = client.get(f"/api/v1/conversations/{conversation_id}").json()
+    agent_sales = [
+        m
+        for m in detail["messages"]
+        if m["sender_type"] == "agent"
+        and (m.get("structured_data") or {}).get("kind") == "sales"
+    ]
+    assert agent_sales == []
+
+    # 12. Manager approves -> the quote message lands in the dialog.
+    approve = client.post(f"/api/v1/approvals/{approval_id}/approve")
+    assert approve.status_code == 200
+    assert approve.json()["message_sent"] is True
+
+    detail = client.get(f"/api/v1/conversations/{conversation_id}").json()
+    agent_sales = [
+        m
+        for m in detail["messages"]
+        if m["sender_type"] == "agent"
+        and (m.get("structured_data") or {}).get("kind") == "sales"
+    ]
+    assert len(agent_sales) == 1
+    assert agent_sales[0]["content"] == draft["ai_draft"]
+
+    # 13. The quote is now marked sent; resending is idempotent.
+    after = client.get(f"/api/v1/quotes/{quote_id}/sales-draft").json()
+    assert after["status"] == "sent"
+
+    again = client.post(
+        f"/api/v1/quotes/{quote_id}/send", json={"message": draft["ai_draft"]}
+    )
+    assert again.status_code == 200
+    assert again.json()["already_executed"] is True
+
+    again_approve = client.post(f"/api/v1/approvals/{approval_id}/approve")
+    assert again_approve.status_code == 200
+    assert again_approve.json()["already_approved"] is True
+
 
 def test_reprocessing_message_does_not_duplicate(client, db_session):
     conversation_id = _make_conversation(client, db_session)

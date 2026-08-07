@@ -81,6 +81,21 @@ class PricingService:
             margin=margin,
             triggered_by=triggered_by,
         )
+
+        quote = None
+        if priced:
+            from app.services.quote_service import QuoteService
+
+            quote = QuoteService(self.db).ensure_from_pricing(
+                part_request,
+                offers=offers,
+                best=best,
+                margin=margin,
+                currency=self.currency,
+            )
+            if quote is not None:
+                summary["quote_id"] = str(quote.id)
+
         data = (
             part_request.structured_data.copy()
             if isinstance(part_request.structured_data, dict)
@@ -89,6 +104,14 @@ class PricingService:
         data[_PRICING_KEY] = summary
         part_request.structured_data = data
         self.db.commit()
+
+        if quote is not None:
+            # Automatic hand-off: after pricing the platform prepares a sales
+            # draft (SalesAgent) so a manager can review and send it.
+            from app.services.quote_service import QuoteService
+
+            QuoteService(self.db).submit_sales_draft(quote, part_request)
+
         return summary
 
     def summary(self, part_request_id: uuid.UUID) -> dict[str, Any] | None:

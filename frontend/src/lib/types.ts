@@ -234,6 +234,7 @@ export type PartQuote = {
   status: string;
   part_request_id: string;
   run_id: string | null;
+  quote_id: string | null;
   triggered_by: string;
   margin_percent: number | null;
   currency: string;
@@ -247,4 +248,63 @@ export type PartQuote = {
   best_unit_price: string | null;
   best_total_price: string | null;
   priced_at: string | null;
+};
+
+export type QuoteItem = {
+  offer_id: string;
+  brand: string;
+  article: string;
+  part_name: string;
+  sale_price: string | null;
+  total_price: string | null;
+  delivery_days: number | null;
+  quantity_available: number | null;
+  margin_percent: string | null;
+};
+
+export type SalesDraft = {
+  quote_id: string;
+  part_request_id: string;
+  conversation_id: string;
+  status: string;
+  currency: string;
+  quote_total: string | null;
+  best_offer_id: string | null;
+  items: QuoteItem[];
+  ai_draft: string | null;
+  manager_edited: string | null;
+  final_message: string | null;
+  guard_status: string;
+  guard_errors: string[] | null;
+  sent_at: string | null;
+  created_at: string | null;
+};
+
+export type Approval = {
+  id: string;
+  company_id: string;
+  task_id: string | null;
+  conversation_id: string | null;
+  quote_id: string | null;
+  action_id: string | null;
+  action_type: string;
+  status: string;
+  payload: Record<string, unknown> | null;
+  risk_level: string;
+  requested_by_agent_id: string | null;
+  approved_by_user_id: string | null;
+  approved_at: string | null;
+  rejected_by_user_id: string | null;
+  rejected_at: string | null;
+  rejection_reason: string | null;
+  created_at: string;
+  expires_at: string | null;
+};
+
+export type QuoteSendResult = {
+  approval_id: string | null;
+  status: string;
+  message_sent: boolean;
+  already_executed: boolean;
+  quote_id: string | null;
 };

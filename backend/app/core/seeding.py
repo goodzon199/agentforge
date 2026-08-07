@@ -65,6 +65,17 @@ PRICING_AGENT_INSTRUCTIONS = (
     "в structured_data заявки."
 )
 
+SALES_AGENT_GOAL = (
+    "Готовить клиенту предложение по готовой квоте (только перефразировать факты)."
+)
+SALES_AGENT_INSTRUCTIONS = (
+    "Ты — SalesAgent. Получаешь задачу sales_draft с quote_id. Читаешь квоту "
+    "(Quote.items) и составляешь вежливое сообщение клиенту со списком вариантов: "
+    "бренд, артикул, цена, срок и наличие. Ты НЕ ищешь запчасти, НЕ считаешь и "
+    "НЕ меняешь цены и не выдумываешь наличие. Никогда не сообщай закупочную цену "
+    "и наценку. Каждое сообщение проверяет QuoteGuard."
+)
+
 # Demo supplier backend for the parts pipeline (mock, deterministic).
 DEMO_SUPPLIERS = [
     {
@@ -153,6 +164,7 @@ def seed_demo(db: Session) -> dict[str, object]:
         "search_agent": False,
         "intake_agent": False,
         "pricing_agent": False,
+        "sales_agent": False,
         "knowledge": False,
         "suppliers": False,
         "admin": False,
@@ -251,6 +263,22 @@ def seed_demo(db: Session) -> dict[str, object]:
         company_id=company.id,
     )
 
+    created["sales_agent"] = _ensure_agent(
+        db,
+        slug="sales-agent",
+        name="SalesAgent",
+        role="Подготовка предложения клиенту по готовой квоте",
+        goal=SALES_AGENT_GOAL,
+        description=(
+            "Специализированный агент: превращает готовую квоту (расчёт цен) в "
+            "вежливое предложение клиенту. Не меняет цены и наличие; каждое "
+            "сообщение проверяет QuoteGuard."
+        ),
+        instructions=SALES_AGENT_INSTRUCTIONS,
+        agent_type=AgentType.specialized,
+        company_id=company.id,
+    )
+
     knowledge_count = db.scalars(
         select(KnowledgeEntry).where(KnowledgeEntry.company_id == company.id)
     ).all()
@@ -296,6 +324,7 @@ def seed_demo(db: Session) -> dict[str, object]:
                 hashed_password=hash_password(settings.seed_admin_password),
                 is_superuser=True,
                 is_active=True,
+                company_id=company.id,
             )
         )
         created["admin"] = True
@@ -303,6 +332,10 @@ def seed_demo(db: Session) -> dict[str, object]:
             "Создан демо-администратор %s (пароль в .env: seed_admin_password)",
             settings.seed_admin_email,
         )
+    elif admin.company_id is None:
+        # Backfill: an admin created before users.company_id existed must be
+        # scoped to the demo company, otherwise approval/quote APIs forbid it.
+        admin.company_id = company.id
 
     db.commit()
     return created

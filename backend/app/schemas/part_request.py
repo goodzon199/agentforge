@@ -102,6 +102,7 @@ class PartQuoteRead(BaseModel):
     status: str
     part_request_id: uuid.UUID
     run_id: uuid.UUID | None = None
+    quote_id: uuid.UUID | None = None
     triggered_by: str = ""
     margin_percent: float | None = None
     currency: str = "RUB"

@@ -27,12 +27,47 @@
 > столбцы `customer_price`/`total_price`/`margin_percent` у офферов,
 > REST API `/part_requests/{id}/price|quote`, блок «Лучшее предложение»
 > с ценой для менеджера в UI.
+>
+> Sprint 2 (часть 5) — Согласование продажи: `SalesAgent` формулирует
+> предложение по готовой квоте, `QuoteGuard` детерминированно проверяет текст
+> (цены, валюта, артикулы, срок, наличие), отправка клиенту — MEDIUM-риск и
+> всегда идёт через `ApprovalRequest` менеджера; сущности `Quote`,
+> `AgentAction`, `AgentFeedback`, модель рисков `core/risk.py`, UI-блок
+> «Предложение клиенту» с approve/reject.
 
 ---
 
 ## Что сделано (по порядку, последнее сверху)
 
-1. **feat/pricing-engine** — вертикальный срез «цены на заявку»:
+1. **feat/sales-approval** — вертикальный срез «предложение клиенту с согласованием»:
+   - Модель рисков `core/risk.py`: `ACTION_RISK` — подготовка черновика (low, агент сам),
+     отправка клиенту / создание CRM-записи / письмо (medium → всегда approval),
+     изменение цены / скидка / возврат / оплата (high, только человек).
+   - `SalesAgent` — только формулирует сообщение по готовой квоте (никаких поисков и
+     цен), на фактах квоты; `QuoteGuard` детерминированно проверяет текст: цена только
+     из квоты (закупочная не протечёт), валюта `RUB`, артикул/бренд/срок/наличие —
+     только из квоты. При блоке текст заменяется системным шаблоном.
+   - Сущности: `Quote` (статусы draft → pending_approval → sent, снимок офферов,
+     `ai_draft`/`manager_edited`/`final_message`, `guard_status`), `ApprovalRequest`
+     (pending/approved/rejected/expired, `approval_ttl_hours=24`), `AgentAction`
+     (аудит: кто/что/риск/idempotency_key), `AgentFeedback` (approved_unchanged /
+     approved_edited / rejected); `users.company_id` для scoping по компаниям.
+   - После pricing автоматически создаётся Quote + handoff-задача `sales_draft`
+     (SalesAgent формирует черновик). Отправка клиенту — MEDIUM-риск, всегда
+     `ApprovalRequest`; QuoteGuard перепроверяется при send **и** при approve;
+     идемпотентность по ключу `send_quote:{quote_id}:{conversation_id}`.
+   - REST API под JWT: `GET /quotes/{id}/sales-draft`, `POST /quotes/{id}/prepare|send|reject`,
+     `GET /approvals`, `POST /approvals/{id}/approve|reject`, `GET /actions`. Всё scoped
+     по `user.company_id` (403 чужой компании).
+   - Frontend: блок «Предложение клиенту» в панели заявки — текст-черновик (можно
+     править), бейдж проверки QuoteGuard, «Отправить на согласование», для менеджера
+     «Одобрить и отправить клиенту» / «Отклонить», статус и срок согласования.
+   - Alembic-миграция `a1b2c3d4e5f6` (4 таблицы + `users.company_id`), применена в
+     live-БД; сидинг создаёт агента `sales-agent` и привязывает админа к демо-компании.
+   - Тесты 146/146 (+~28): QuoteGuard (11), SalesAgent/API approvals/actions (17),
+     DoD-сценарий расширен до «… → pricing → sales_draft → send → approve → сообщение
+     клиенту → идемпотентность».
+2. **feat/pricing-engine** — вертикальный срез «цены на заявку»:
    - `PricingService`: клиентская цена = закупочная × (1 + margin/100), округление
      half-up; margin берётся из `company.settings.pricing.margin_percent`
      (по умолчанию `PRICING_MARGIN_PERCENT=30.0`, валюта `RUB`).
@@ -166,7 +201,7 @@ npm run dev                   # http://localhost:3000
 
 ```bash
 cd backend
-.venv\Scripts\python.exe -m pytest     # 99 тестов: агенты, оркестратор, API, память, email, поиск, эмбеддинги, auth, диалоги, intake, поставщики
+.venv\Scripts\python.exe -m pytest     # 146 тестов: агенты, оркестратор, API, память, email, поиск, эмбеддинги, auth, диалоги, intake, поставщики, цены, согласование
 ```
 
 ## Структура
@@ -175,14 +210,14 @@ cd backend
 agentforge/
 ├── backend/
 │   ├── app/
-│   │   ├── api/v1/        # REST API: companies, agents, tasks, logs, settings, dashboard, customers, conversations, part_requests, suppliers
+│   │   ├── api/v1/        # REST API: companies, agents, tasks, logs, settings, dashboard, customers, conversations, part_requests, suppliers, quotes, approvals, actions
 │   │   ├── core/          # config, database, redis, seeding
-│   │   ├── agents/        # BaseAgent, SystemAgent, EmailAgent, SearchAgent, IntakeAgent, реестр
+│   │   ├── agents/        # BaseAgent, SystemAgent, EmailAgent, SearchAgent, IntakeAgent, PricingAgent, SalesAgent, реестр
 │   │   ├── orchestrator/  # сердце платформы: маршрутизация, handoff, очередь, воркеры
 │   │   ├── tools/         # каждый инструмент — отдельный модуль (email, search, http)
 │   │   ├── suppliers/     # адаптеры поставщиков: base, mock, csv, normalize, registry
-│   │   ├── models/        # Agent, Company, Task, Memory, Customer, Conversation, PartRequest, Supplier, SupplierOffer, SupplierSearch*
-│   │   ├── services/      # сервисный слой (в т.ч. PartsSearchService, SupplierService)
+│   │   ├── models/        # Agent, Company, Task, Memory, Customer, Conversation, PartRequest, Supplier, Quote, ApprovalRequest, AgentAction, AgentFeedback
+│   │   ├── services/      # сервисный слой (в т.ч. PartsSearchService, SupplierService, QuoteGuard, QuoteService, SalesService)
 │   │   ├── memory/        # Short / Long / Knowledge Base
 │   │   ├── llm/           # провайдеры LLM (OpenAI-совместимые)
 │   │   └── main.py

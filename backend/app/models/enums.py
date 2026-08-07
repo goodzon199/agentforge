@@ -87,3 +87,58 @@ class SupplierAttemptStatus(str, enum.Enum):
     pending = "pending"
     succeeded = "succeeded"
     failed = "failed"
+
+
+class QuoteStatus(str, enum.Enum):
+    """Sales funnel of a customer quote (sprint 2.5)."""
+
+    draft = "draft"
+    pending_approval = "pending_approval"
+    approved = "approved"
+    sent = "sent"
+    accepted = "accepted"
+    rejected = "rejected"
+    expired = "expired"
+    converted_to_order = "converted_to_order"
+
+
+class ApprovalStatus(str, enum.Enum):
+    """Lifecycle of an approval request raised by an agent action."""
+
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+    expired = "expired"
+    cancelled = "cancelled"
+
+
+class ApprovalRiskLevel(str, enum.Enum):
+    """How much trust the platform grants an agent action.
+
+    LOW — the agent acts alone; MEDIUM — requires company policy (approval);
+    HIGH — only a human may perform it.
+    """
+
+    low = "LOW"
+    medium = "MEDIUM"
+    high = "HIGH"
+
+
+class AgentActionStatus(str, enum.Enum):
+    """Lifecycle of a recorded agent action (audit + idempotency)."""
+
+    pending = "pending"
+    executed = "executed"
+    failed = "failed"
+    cancelled = "cancelled"
+
+
+class AgentFeedbackType(str, enum.Enum):
+    """How a human corrected an agent's output (learning feedback)."""
+
+    approved_unchanged = "approved_unchanged"
+    approved_edited = "approved_edited"
+    rejected = "rejected"
+    incorrect_fact = "incorrect_fact"
+    bad_tone = "bad_tone"
+    wrong_recommendation = "wrong_recommendation"

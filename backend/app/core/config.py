@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     pricing_margin_percent: float = 30.0
     pricing_currency: str = "RUB"
 
+    # Sales + approval (sprint 2.5)
+    # Срок жизни запроса на согласование: после expiry approve/reject нельзя.
+    approval_ttl_hours: float = 24.0
+
     # E-mail (SMTP)
     smtp_host: str = ""
     smtp_port: int = 1025

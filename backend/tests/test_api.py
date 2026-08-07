@@ -11,7 +11,7 @@ def test_dashboard(client):
     assert resp.status_code == 200
     data = resp.json()
     assert data["companies"] == 1
-    assert data["agents"] == 5
+    assert data["agents"] == 6
 
 
 def test_create_and_run_task_via_api(client):

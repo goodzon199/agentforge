@@ -4,6 +4,7 @@ from app.agents.base import BaseAgent
 from app.agents.email import EmailAgent
 from app.agents.intake_agent import IntakeAgent
 from app.agents.pricing import PricingAgent
+from app.agents.sales import SalesAgent
 from app.agents.search import SearchAgent
 from app.agents.system import SystemAgent
 
@@ -13,6 +14,7 @@ _AGENT_CLASSES: dict[str, type[BaseAgent]] = {
     "search": SearchAgent,
     "intake": IntakeAgent,
     "pricing": PricingAgent,
+    "sales": SalesAgent,
 }
 
 # Map SystemAgent handoff names to agent types/slugs.
@@ -21,6 +23,7 @@ HANDOFF_TO_TYPE: dict[str, str] = {
     "SearchAgent": "search",
     "IntakeAgent": "intake",
     "PricingAgent": "pricing",
+    "SalesAgent": "sales",
 }
 
 

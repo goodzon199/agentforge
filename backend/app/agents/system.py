@@ -18,6 +18,10 @@ _ROUTING_RULES: list[tuple[list[str], str]] = [
         "PricingAgent",
     ),
     (
+        ["sales_draft", "подготовь предложение", "предложение клиенту", "sales"],
+        "SalesAgent",
+    ),
+    (
         ["search_parts"],
         "SearchAgent",
     ),
@@ -32,10 +36,10 @@ _ROUTING_RULES: list[tuple[list[str], str]] = [
 ]
 
 # Internal pipeline objectives are always routed deterministically so the
-# vertical slice (message -> intake -> search -> pricing) does not depend on
-# LLM mood.
+# vertical slice (message -> intake -> search -> pricing -> sales) does not
+# depend on LLM mood.
 _INTERNAL_OBJECTIVES = frozenset(
-    {"process_customer_message", "search_parts", "pricing_parts"}
+    {"process_customer_message", "search_parts", "pricing_parts", "sales_draft"}
 )
 
 
@@ -112,6 +116,7 @@ class SystemAgent(BaseAgent):
             "Известные агенты: IntakeAgent (обработка входящих сообщений клиентов и оформление заявок на запчасти), "
             "SearchAgent (поиск товаров/запчастей/информации), "
             "PricingAgent (расчёт цены по предложениям поставщиков), "
+            "SalesAgent (подготовка предложения клиенту по готовой квоте), "
             "EmailAgent (отправка писем)."
         )
         user_prompt = (
