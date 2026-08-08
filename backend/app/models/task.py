@@ -47,6 +47,11 @@ class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     routing_decision: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     retries: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # Set when this task was created by a Replay of another task (sprint 3.5).
+    replayed_from_task_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("tasks.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

@@ -8,6 +8,7 @@ from app.models.company_policy import CompanyPolicy
 from app.models.conversation import Conversation
 from app.models.conversation_message import ConversationMessage
 from app.models.customer import Customer
+from app.models.dead_task import DeadTask
 from app.models.llm_usage import LLMUsage
 from app.models.memory import KnowledgeEntry, LongMemory, MemoryEntry, ShortMemory
 from app.models.order import Order
@@ -33,6 +34,7 @@ __all__ = [
     "Conversation",
     "ConversationMessage",
     "Customer",
+    "DeadTask",
     "KnowledgeEntry",
     "LLMUsage",
     "LongMemory",

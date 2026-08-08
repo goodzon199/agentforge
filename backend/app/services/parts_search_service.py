@@ -35,6 +35,13 @@ _NEXT_ACTION = "pricing_parts"
 # as "skipped" and neither count as success nor as failure.
 _SKIPPED_MARKER = object()
 
+# Adapter type -> circuit breaker name (sprint 3.5). Adapters not listed
+# (mock/csv) are in-process and never trip a breaker.
+_BREAKER_BY_ADAPTER = {
+    "rossko": "rossko",
+    "http": "http",
+}
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -277,6 +284,21 @@ class PartsSearchService:
         query: SupplierSearchQuery,
     ) -> tuple[SupplierSearchAttempt, list[NormalizedSupplierOffer], Any, int]:
         started = time.monotonic()
+        # Circuit breaker: an open supplier breaker means "don't even try" —
+        # skip immediately instead of burning the search timeout on a provider
+        # we already know is down. The failure is still recorded in the run.
+        breaker_name = _BREAKER_BY_ADAPTER.get(supplier.adapter_type)
+        if breaker_name is not None:
+            from app.reliability.circuit_breaker import get_breaker
+
+            if not get_breaker(breaker_name).allow_request():
+                latency = int((time.monotonic() - started) * 1000)
+                return (
+                    attempt,
+                    [],
+                    f"supplier_unavailable: circuit breaker «{breaker_name}» открыт",
+                    latency,
+                )
         try:
             adapter = SupplierService(self.db).adapter_for(supplier)
             offers = await asyncio.wait_for(adapter.search(query), timeout=self.timeout)

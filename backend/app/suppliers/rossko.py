@@ -9,6 +9,8 @@ from xml.sax.saxutils import escape
 
 import httpx
 
+from app.reliability.circuit_breaker import get_breaker
+from app.reliability.errors import FailureKind
 from app.suppliers.base import NormalizedSupplierOffer, SupplierAdapter, SupplierSearchQuery
 from app.suppliers.errors import (
     SupplierAdapterError,
@@ -24,6 +26,13 @@ from app.suppliers.errors import (
 _RETRIABLE_STATUSES = {408, 425, 429, 500, 502, 503, 504}
 _AUTH_HINTS = ("ключ", "авторизац", "key", "credential", "unauthor")
 _RATE_HINTS = ("лимит", "limit", "превышен", "too many", "overload")
+
+
+def _kind_for_status(status: int) -> FailureKind:
+    """A retriable HTTP status is an availability signal, not a business error."""
+    if status == 429:
+        return FailureKind.RATE_LIMITED
+    return FailureKind.UNAVAILABLE
 
 _NS_ENVELOPE = "http://schemas.xmlsoap.org/soap/envelope/"
 _NS_SERVICE = "https://api.rossko.ru/"
@@ -144,6 +153,16 @@ class RosskoAdapter(SupplierAdapter):
         self._next_request_at = 0.0
         self.requests_made = 0
         self.last_statuses: list[int] = []
+        # Unified RetryPolicy (sprint 3.5): transient-only retries with
+        # exponential backoff + jitter. Per-supplier config stays authoritative
+        # (max_retries / backoff_base from the supplier record).
+        from app.reliability.retry import RetryPolicy
+
+        self.retry_policy = RetryPolicy(
+            max_attempts=self.max_retries + 1,
+            initial_delay=self.backoff_base,
+            max_delay=30.0,
+        )
 
     # --- Public API --------------------------------------------------------
 
@@ -242,6 +261,14 @@ class RosskoAdapter(SupplierAdapter):
         self, method: str, params: dict[str, str]
     ) -> "_RosskoResult":
         body = self._envelope(method, params)
+        # Circuit breaker "rossko": when open, fail fast instead of waiting
+        # for a timeout on a provider we already know is down.
+        breaker = get_breaker("rossko")
+        if not breaker.allow_request():
+            raise SupplierConnectionError(
+                f"Поставщик «{self.name}» недоступен: circuit breaker открыт."
+            )
+        policy = self.retry_policy
         attempt = 0
         while True:
             await self._throttle()
@@ -251,18 +278,20 @@ class RosskoAdapter(SupplierAdapter):
                         self.service_url, headers=self._soap_headers(), content=body
                     )
             except httpx.TimeoutException as exc:
-                if attempt < self.max_retries:
+                if policy.should_retry(FailureKind.TIMEOUT, attempt + 1):
                     attempt += 1
-                    await self._sleep_backoff(attempt)
+                    await asyncio.sleep(policy.next_delay(attempt))
                     continue
+                breaker.record_failure()
                 raise SupplierTimeoutError(
                     f"Поставщик «{self.name}» не ответил в течение {self.timeout:g} с."
                 ) from exc
             except httpx.HTTPError as exc:
-                if attempt < self.max_retries:
+                if policy.should_retry(FailureKind.UNAVAILABLE, attempt + 1):
                     attempt += 1
-                    await self._sleep_backoff(attempt)
+                    await asyncio.sleep(policy.next_delay(attempt))
                     continue
+                breaker.record_failure()
                 raise SupplierConnectionError(
                     f"Поставщик «{self.name}» недоступен: {exc.__class__.__name__}"
                 ) from exc
@@ -274,26 +303,29 @@ class RosskoAdapter(SupplierAdapter):
             except SupplierParseError:
                 if (
                     response.status_code in _RETRIABLE_STATUSES
-                    and attempt < self.max_retries
+                    and policy.should_retry(_kind_for_status(response.status_code), attempt + 1)
                 ):
                     attempt += 1
-                    await self._sleep_backoff(attempt)
+                    await asyncio.sleep(policy.next_delay(attempt))
                     continue
                 raise
             result.status = response.status_code
             if result.success:
+                breaker.record_success()
                 return result
             if result.kind == "auth" or result.kind == "rate_limit":
                 return result
             if (
                 response.status_code in _RETRIABLE_STATUSES
-                and attempt < self.max_retries
+                and policy.should_retry(_kind_for_status(response.status_code), attempt + 1)
             ):
                 attempt += 1
                 await asyncio.sleep(
-                    self._retry_after(response) or self._backoff(attempt)
+                    self._retry_after(response) or policy.next_delay(attempt)
                 )
                 continue
+            if response.status_code >= 500:
+                breaker.record_failure()
             return result
 
     def _parse(self, response: httpx.Response) -> "_RosskoResult":
@@ -423,12 +455,6 @@ class RosskoAdapter(SupplierAdapter):
             return int(float(value.replace(",", ".").replace(" ", "")))
         except (ValueError, TypeError):
             return None
-
-    def _backoff(self, attempt: int) -> float:
-        return min(self.backoff_base * (2 ** (attempt - 1)), 30.0)
-
-    async def _sleep_backoff(self, attempt: int) -> None:
-        await asyncio.sleep(self._backoff(attempt))
 
     @staticmethod
     def _retry_after(response: httpx.Response) -> float | None:

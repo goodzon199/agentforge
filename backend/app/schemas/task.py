@@ -31,6 +31,7 @@ class TaskRead(ORMModel):
     error: str | None
     routing_decision: dict[str, Any] | None
     retries: int
+    replayed_from_task_id: uuid.UUID | None
     created_at: datetime
     started_at: datetime | None
     completed_at: datetime | None
@@ -49,3 +50,18 @@ class TaskEventRead(ORMModel):
 
 class TaskDetail(TaskRead):
     events: list[TaskEventRead] = []
+
+
+class DeadTaskRead(ORMModel):
+    id: uuid.UUID
+    task_id: uuid.UUID
+    company_id: uuid.UUID
+    agent_id: uuid.UUID | None
+    objective: str
+    payload: dict[str, Any]
+    exception_kind: str
+    error: str | None
+    attempts: int
+    dead_at: datetime
+    replayed_task_id: uuid.UUID | None
+    created_at: datetime

@@ -113,3 +113,78 @@ class TaskService:
             if hasattr(task, key) and key not in ("id", "company_id"):
                 setattr(task, key, value)
         return task
+
+    def replay_depth(self, task: Task) -> int:
+        """How many generations of Replay produced this task (1 = direct replay)."""
+        depth = 0
+        seen: set[uuid.UUID] = set()
+        current: Task | None = task
+        while current is not None and current.replayed_from_task_id is not None:
+            if current.id in seen:
+                return depth  # loop guard — never trust a corrupt chain
+            seen.add(current.id)
+            depth += 1
+            current = self.db.get(Task, current.replayed_from_task_id)
+        return depth
+
+    def replay(self, task_id: uuid.UUID) -> Task:
+        """Create a NEW task from a terminal one (sprint 3.5 Replay).
+
+        The original task's history (events, output, error) is never touched.
+        The new task carries ``replayed_from_task_id`` so operators see the
+        chain; a depth guard prevents infinite replay loops.
+        """
+        from app.core.config import settings
+
+        original = self.get(task_id)
+        if original is None:
+            raise ValueError("Задача не найдена.")
+        if original.status in (
+            TaskStatus.pending,
+            TaskStatus.queued,
+            TaskStatus.running,
+            TaskStatus.awaiting_routing,
+        ):
+            raise ValueError(
+                "Повторить можно только завершённую задачу "
+                f"(статус {original.status.value})."
+            )
+        if self.replay_depth(original) >= settings.task_max_replay_depth:
+            raise ValueError(
+                f"Превышена максимальная глубина повторов "
+                f"({settings.task_max_replay_depth})."
+            )
+
+        task = Task(
+            company_id=original.company_id,
+            agent_id=original.agent_id,
+            title=f"Повтор: {original.title}"[:240],
+            objective=original.objective,
+            status=TaskStatus.pending,
+            priority=original.priority,
+            input_data=dict(original.input_data or {}),
+            replayed_from_task_id=original.id,
+        )
+        self.db.add(task)
+        self.db.flush()  # assign task.id before the event references it
+        self.db.add(
+            TaskEvent(
+                task_id=task.id,
+                source="orchestrator",
+                level="info",
+                message=f"Повторно запущено из задачи {original.id}.",
+                meta={"replayed_from_task_id": str(original.id)},
+            )
+        )
+        # Link the dead-letter record (if any) so the DLQ shows the delivery.
+        from app.models import DeadTask
+
+        dead = self.db.scalar(
+            select(DeadTask).where(DeadTask.task_id == original.id)
+        )
+        if dead is not None and dead.replayed_task_id is None:
+            dead.replayed_task_id = task.id
+
+        self.db.commit()
+        self.db.refresh(task)
+        return task

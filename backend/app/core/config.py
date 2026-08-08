@@ -89,12 +89,35 @@ class Settings(BaseSettings):
     # Аналогично для поискового запуска (supplier_failed).
     search_run_max_running_seconds: float = 60.0
 
+    # Reliability layer (sprint 3.5)
+    # Task-level retry: transient failures requeue up to this many times
+    # before the task lands in the dead-letter queue.
+    task_max_retries: int = 2
+    # Replay chain guard: how many generations of "Повторить" a task may spawn.
+    task_max_replay_depth: int = 5
+    dlq_queue_name: str = "agentos:tasks:dead"
+
+    # Unified RetryPolicy (transient-only, exponential backoff + jitter).
+    retry_max_attempts: int = 2
+    retry_initial_delay: float = 0.5
+    retry_max_delay: float = 3.0
+    # Per-service overrides, e.g. {"rossko": {"max_attempts": 3, "initial_delay": 1.0}}.
+    retry_policies: dict[str, dict] = {}
+
+    # Circuit breakers (ollama / rossko / smtp / http).
+    circuit_breaker_failure_threshold: int = 5
+    circuit_breaker_recovery_timeout: float = 30.0
+    circuit_breaker_half_open_max_calls: int = 1
+    # Per-service overrides, e.g. {"smtp": {"failure_threshold": 3}}.
+    circuit_breaker_overrides: dict[str, dict] = {}
+
     # E-mail (SMTP)
     smtp_host: str = ""
     smtp_port: int = 1025
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_from: str = "agentforge@agentos.local"
+    smtp_timeout: float = 10.0
     email_default_to: str = "demo@agentos.local"
 
     # Auth (JWT)

@@ -46,10 +46,26 @@ export type Task = {
   error: string | null;
   routing_decision: Record<string, unknown> | null;
   retries: number;
+  replayed_from_task_id: string | null;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
   events?: TaskEvent[];
+};
+
+export type DeadTask = {
+  id: string;
+  task_id: string;
+  company_id: string;
+  agent_id: string | null;
+  objective: string;
+  payload: Record<string, unknown>;
+  exception_kind: string;
+  error: string | null;
+  attempts: number;
+  dead_at: string;
+  replayed_task_id: string | null;
+  created_at: string;
 };
 
 export type TaskEvent = {

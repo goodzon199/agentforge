@@ -32,3 +32,5 @@ Thumbs.db
 # Logs & data
 *.log
 backend/alembic/versions/*.pyc
+
+tsconfig.tsbuildinfo

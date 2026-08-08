@@ -3,10 +3,18 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 
 from app.api.deps import get_task_service
+from app.models import DeadTask
 from app.orchestrator.orchestrator import orchestrator
-from app.schemas.task import TaskCreate, TaskDetail, TaskEventRead, TaskRead
+from app.schemas.task import (
+    DeadTaskRead,
+    TaskCreate,
+    TaskDetail,
+    TaskEventRead,
+    TaskRead,
+)
 from app.services.task_service import TaskService
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -42,6 +50,33 @@ def create_task(
     task = service.create(**payload.model_dump())
     service.db.commit()
     service.db.refresh(task)
+    task = orchestrator.submit(service.db, task)
+    service.db.refresh(task)
+    return _detail(task)
+
+
+@router.get("/dead", response_model=list[DeadTaskRead])
+def list_dead_tasks(
+    limit: int = 100,
+    service: TaskService = Depends(get_task_service),
+):
+    """Dead-letter queue: tasks that exhausted retries (source of truth)."""
+    stmt = (
+        select(DeadTask).order_by(DeadTask.dead_at.desc()).limit(min(limit, 500))
+    )
+    return [DeadTaskRead.model_validate(d) for d in service.db.scalars(stmt).unique().all()]
+
+
+@router.post("/{task_id}/replay", response_model=TaskDetail)
+def replay_task(
+    task_id: uuid.UUID,
+    service: TaskService = Depends(get_task_service),
+):
+    """Replay a terminal task: creates a NEW task from it (sprint 3.5)."""
+    try:
+        task = service.replay(task_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     task = orchestrator.submit(service.db, task)
     service.db.refresh(task)
     return _detail(task)

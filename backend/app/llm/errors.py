@@ -18,6 +18,8 @@ class LLMErrorKind(str, enum.Enum):
     TIMEOUT = "timeout"
     UNAVAILABLE = "unavailable"
     RATE_LIMITED = "rate_limited"
+    AUTHENTICATION = "authentication"
+    PERMISSION_DENIED = "permission_denied"
     INVALID_RESPONSE = "invalid_response"
     ERROR = "error"
 
@@ -59,8 +61,10 @@ def classify_exception(exc: BaseException) -> LLMErrorKind:
             return LLMErrorKind.UNAVAILABLE
         return LLMErrorKind.ERROR
 
-    if name in {"AuthenticationError", "PermissionDeniedError"}:
-        return LLMErrorKind.UNAVAILABLE
+    if name in {"AuthenticationError"}:
+        return LLMErrorKind.AUTHENTICATION
+    if name in {"PermissionDeniedError"}:
+        return LLMErrorKind.PERMISSION_DENIED
 
     if name in {"ConnectError", "ConnectionError", "RemoteProtocolError"}:
         return LLMErrorKind.UNAVAILABLE

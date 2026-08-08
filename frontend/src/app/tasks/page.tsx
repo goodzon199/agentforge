@@ -3,12 +3,15 @@
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
-import type { Company, Task } from "@/lib/types";
+import type { Company, DeadTask, Task } from "@/lib/types";
 import { EmptyState, ErrorBox, Loading, SectionHeader, StatusBadge } from "@/components/ui";
+
+const REPLAYABLE = new Set(["failed", "cancelled", "completed"]);
 
 export default function TasksPage() {
   const { data: tasks, loading, error, reload } = useApi<Task[]>("/tasks?limit=50");
   const { data: companies } = useApi<Company[]>("/companies");
+  const { data: dead, reload: reloadDead } = useApi<DeadTask[]>("/tasks/dead");
 
   const [companyId, setCompanyId] = useState("");
   const [objective, setObjective] = useState("");
@@ -16,6 +19,7 @@ export default function TasksPage() {
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [result, setResult] = useState<Task | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -39,6 +43,18 @@ export default function TasksPage() {
       setSubmitError(err instanceof Error ? err.message : "Ошибка отправки");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function replay(taskId: string) {
+    setBusyId(taskId);
+    try {
+      await api.post<Task>(`/tasks/${taskId}/replay`, {});
+      await Promise.all([reload(), reloadDead()]);
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : "Ошибка повтора");
+    } finally {
+      setBusyId(null);
     }
   }
 
@@ -130,6 +146,7 @@ export default function TasksPage() {
                   <th className="px-5 py-3 font-medium">Статус</th>
                   <th className="px-5 py-3 font-medium">Маршрут</th>
                   <th className="px-5 py-3 font-medium">Создана</th>
+                  <th className="px-5 py-3 font-medium"></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-surface-border">
@@ -138,6 +155,11 @@ export default function TasksPage() {
                     <td className="max-w-[320px] px-5 py-3">
                       <div className="truncate text-slate-200">{t.title}</div>
                       <div className="truncate text-xs text-slate-500">{t.objective}</div>
+                      {t.replayed_from_task_id ? (
+                        <div className="truncate text-xs text-accent-soft">
+                          повтор от {t.replayed_from_task_id.slice(0, 8)}
+                        </div>
+                      ) : null}
                     </td>
                     <td className="px-5 py-3">
                       <StatusBadge status={t.status} />
@@ -148,6 +170,17 @@ export default function TasksPage() {
                     <td className="px-5 py-3 text-xs text-slate-500">
                       {new Date(t.created_at).toLocaleString("ru-RU")}
                     </td>
+                    <td className="px-5 py-3 text-right">
+                      {REPLAYABLE.has(t.status) ? (
+                        <button
+                          className="btn-ghost text-xs"
+                          disabled={busyId === t.id}
+                          onClick={() => replay(t.id)}
+                        >
+                          {busyId === t.id ? "Повтор…" : "Повторить"}
+                        </button>
+                      ) : null}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -155,6 +188,61 @@ export default function TasksPage() {
           </div>
         </div>
       )}
+
+      <div className="mt-8">
+        <SectionHeader title={`Dead Letter Queue${dead && dead.length ? ` (${dead.length})` : ""}`} />
+        {dead && dead.length > 0 ? (
+          <div className="card p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-surface-border text-xs uppercase tracking-wide text-slate-500">
+                    <th className="px-5 py-3 font-medium">Задача</th>
+                    <th className="px-5 py-3 font-medium">Код ошибки</th>
+                    <th className="px-5 py-3 font-medium">Попытки</th>
+                    <th className="px-5 py-3 font-medium">Упала в DLQ</th>
+                    <th className="px-5 py-3 font-medium"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-surface-border">
+                  {dead.map((d) => (
+                    <tr key={d.id} className="hover:bg-surface-hover">
+                      <td className="max-w-[320px] px-5 py-3">
+                        <div className="truncate text-slate-200">{d.objective}</div>
+                        {d.error ? (
+                          <div className="truncate text-xs text-rose-300/70">{d.error}</div>
+                        ) : null}
+                      </td>
+                      <td className="px-5 py-3">
+                        <span className="rounded bg-surface px-2 py-0.5 font-mono text-xs text-amber-300">
+                          {d.exception_kind}
+                        </span>
+                      </td>
+                      <td className="px-5 py-3 text-xs text-slate-400">{d.attempts}</td>
+                      <td className="px-5 py-3 text-xs text-slate-500">
+                        {new Date(d.dead_at).toLocaleString("ru-RU")}
+                      </td>
+                      <td className="px-5 py-3 text-right">
+                        <button
+                          className="btn-ghost text-xs"
+                          disabled={busyId === d.task_id}
+                          onClick={() => replay(d.task_id)}
+                        >
+                          {busyId === d.task_id ? "Повтор…" : d.replayed_task_id ? "Повторено" : "Повторить"}
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed border-surface-border p-6 text-center text-xs text-slate-500">
+            Пусто — всё, что упало, уже обработано.
+          </div>
+        )}
+      </div>
     </div>
   );
 }

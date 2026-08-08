@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.registry import agent_registry
+from app.core.config import settings
 from app.core.redis import redis_client
 from app.llm.client import LLMClient, TaskLLMProxy, llm_client
 from app.memory.service import MemoryService
@@ -14,6 +15,7 @@ from app.models import Agent as AgentRecord
 from app.models import Task, TaskEvent
 from app.models.enums import TaskStatus
 from app.orchestrator.messages import ResultMessage, TaskMessage
+from app.reliability.errors import TRANSIENT, FailureKind, classify_exception
 from app.tools.registry import ToolRegistry, tool_registry
 
 logger = logging.getLogger(__name__)
@@ -160,6 +162,7 @@ class Orchestrator:
             }
             task.routing_decision = output.routing_decision
             task.status = TaskStatus.completed
+            task.error = None
             task.completed_at = _now()
             # Attribute the task to the agent that actually executed it.
             task.agent_id = final_agent.id
@@ -182,17 +185,59 @@ class Orchestrator:
 
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("Task %s failed", task.id)
+            kind = classify_exception(exc)
+            llm.flush(db, task_id=task.id, company_id=task.company_id)
+
+            # Transient failures requeue (bounded); everything else goes to
+            # the dead-letter queue. Business errors are never retried.
+            if kind in TRANSIENT and task.retries < settings.task_max_retries:
+                task.retries += 1
+                task.status = TaskStatus.queued
+                task.started_at = None
+                task.completed_at = None
+                task.error = (
+                    f"retry {task.retries}/{settings.task_max_retries} "
+                    f"({kind.value}): {exc}"
+                )
+                self._add_event(
+                    db,
+                    task,
+                    source="orchestrator",
+                    level="warning",
+                    message=(
+                        f"Транзиентная ошибка ({kind.value}), повтор "
+                        f"{task.retries}/{settings.task_max_retries}: {exc}"
+                    ),
+                    meta={"kind": kind.value, "attempt": task.retries},
+                )
+                db.commit()
+                if redis_client.available:
+                    redis_client.push(
+                        settings.task_queue_name,
+                        TaskMessage(
+                            task_id=task.id,
+                            company_id=task.company_id,
+                            objective=task.objective,
+                            input_data=task.input_data or {},
+                            priority=task.priority.value,
+                        ).to_dict(),
+                    )
+                else:
+                    self.process(db, task)  # inline re-run (Redis fallback)
+                return task
+
             task.status = TaskStatus.failed
             task.error = str(exc)
             task.completed_at = _now()
-            llm.flush(db, task_id=task.id, company_id=task.company_id)
             self._add_event(
                 db,
                 task,
                 source="orchestrator",
                 level="error",
-                message=f"Ошибка выполнения: {exc}",
+                message=f"Ошибка выполнения ({kind.value}): {exc}",
+                meta={"kind": kind.value},
             )
+            self._dead_letter(db, task, kind)
             db.commit()
             return task
 
@@ -237,6 +282,40 @@ class Orchestrator:
                 message=message,
                 meta=meta or {},
             )
+        )
+
+    def _dead_letter(
+        self, db: Session, task: Task, kind: FailureKind
+    ) -> None:
+        """Move a failed task to the dead-letter queue.
+
+        Postgres (``dead_tasks``) is the source of truth; the Redis
+        ``agentos:tasks:dead`` list is only a fast signal for operators.
+        """
+        from app.models import DeadTask
+
+        attempts = task.retries + 1
+        db.add(
+            DeadTask(
+                task_id=task.id,
+                company_id=task.company_id,
+                agent_id=task.agent_id,
+                objective=task.objective,
+                payload=task.input_data or {},
+                exception_kind=kind.value,
+                error=task.error,
+                attempts=attempts,
+                dead_at=_now(),
+            )
+        )
+        redis_client.push(
+            settings.dlq_queue_name,
+            {
+                "task_id": str(task.id),
+                "exception_kind": kind.value,
+                "attempts": attempts,
+                "dead_at": _now().isoformat(),
+            },
         )
 
     def _update_statistics(self, db: Session, agent: AgentRecord, *, success: bool) -> None:

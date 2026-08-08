@@ -21,6 +21,8 @@ from app.models import (
     Task,
 )
 from app.models.enums import QuoteStatus, SupplierAttemptStatus, TaskStatus
+from app.reliability.circuit_breaker import breaker_registry
+from app.reliability.errors import from_llm_status
 
 # Stages of the customer pipeline and their target SLA (seconds). Sourced from
 # settings so operators can tune them without code changes.
@@ -134,6 +136,7 @@ class AnalyticsService:
                 "available": llm_client.available,
             },
             "task_timeouts": self._task_timeouts(since),
+            "reliability": self._reliability(since),
         }
 
     # --- Internals ---------------------------------------------------------
@@ -272,3 +275,42 @@ class AnalyticsService:
             .where(Task.started_at >= since)
         )
         return len(list(self.db.scalars(stmt).unique().all()))
+
+    def _reliability(self, since: datetime) -> dict[str, Any]:
+        """Reliability layer (sprint 3.5): breaker states, DLQ, failure kinds.
+
+        Failure kinds are aggregated from the canonical codes persisted on
+        LLMUsage.status and DeadTask.exception_kind, so agents and the
+        dashboard speak the same language (timeout / unavailable / rate_limited
+        / authentication / permission_denied / invalid_response /
+        supplier_error / internal_error).
+        """
+        from app.models import DeadTask, LLMUsage
+
+        llm_statuses = [
+            u.status
+            for u in self._rows(LLMUsage, LLMUsage.created_at >= since)
+            if u.status != "ok"
+        ]
+        dead = self._rows(DeadTask, DeadTask.created_at >= since)
+        kinds: dict[str, int] = {}
+        for status in llm_statuses:
+            code = from_llm_status(status).value
+            if code != "ok":
+                kinds[code] = kinds.get(code, 0) + 1
+        for entry in dead:
+            kinds[entry.exception_kind] = kinds.get(entry.exception_kind, 0) + 1
+
+        replays = len(
+            self._rows(
+                Task,
+                Task.replayed_from_task_id.isnot(None),
+                Task.created_at >= since,
+            )
+        )
+        return {
+            "breakers": breaker_registry.snapshots(),
+            "dead_tasks": len(dead),
+            "replays": replays,
+            "failures_by_kind": kinds,
+        }

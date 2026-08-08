@@ -42,6 +42,7 @@ class PilotAnalytics(BaseModel):
     suppliers: dict[str, Any]
     llm: dict[str, Any]
     task_timeouts: int
+    reliability: dict[str, Any]
 
 
 @router.get("/pilot", response_model=PilotAnalytics)

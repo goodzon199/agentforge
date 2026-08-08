@@ -7,8 +7,11 @@ from sqlalchemy import func, select
 
 from app.core.config import settings
 from app.llm.cost import estimate_cost_rub, usage_from_response
-from app.llm.errors import TRANSIENT, LLMErrorKind, classify_exception, classify_response
+from app.llm.errors import LLMErrorKind, classify_exception, classify_response
 from app.llm.types import LLMMessage, LLMResponse
+from app.reliability.circuit_breaker import get_breaker
+from app.reliability.errors import TRANSIENT, from_llm_kind
+from app.reliability.retry import get_policy
 
 
 class TaskLLMProxy:
@@ -179,21 +182,34 @@ class LLMClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> LLMResponse | None:
+        self.last_attempts = []
+        self.last_error_kind = None
+
         if self._provider is None:
             self.last_attempts = [
                 {"status": LLMErrorKind.UNAVAILABLE.value, "duration_ms": 0}
             ]
             self.last_error_kind = LLMErrorKind.UNAVAILABLE
             return None
+
+        # Circuit breaker "ollama": when open we fail fast instead of burning
+        # a worker thread waiting for a timeout on a dead provider.
+        breaker = get_breaker("ollama")
+        if not breaker.allow_request():
+            self.last_attempts = [
+                {"status": LLMErrorKind.UNAVAILABLE.value, "duration_ms": 0}
+            ]
+            self.last_error_kind = LLMErrorKind.UNAVAILABLE
+            return None
+
         model = model or self.model or settings.openai_model
         temperature = (
             temperature
             if temperature is not None
             else settings.default_agent_temperature
         )
-        self.last_attempts = []
-        self.last_error_kind = None
-        for attempt in range(1, settings.llm_max_attempts + 1):
+        policy = get_policy("llm")
+        for attempt in range(1, policy.max_attempts + 1):
             started = time.monotonic()
             with self._lock:
                 self._calls += 1
@@ -218,26 +234,30 @@ class LLMClient:
             )
             self.last_error_kind = kind
             if kind is LLMErrorKind.OK:
+                breaker.record_success()
                 return response
-            if attempt < settings.llm_max_attempts and kind in TRANSIENT:
-                delay = min(
-                    settings.llm_retry_initial_delay * (2 ** (attempt - 1)),
-                    settings.llm_retry_max_delay,
-                )
-                time.sleep(delay)
+            if policy.should_retry(from_llm_kind(kind), attempt):
+                time.sleep(policy.next_delay(attempt))
                 continue
             break
+        if from_llm_kind(self.last_error_kind) in TRANSIENT:
+            breaker.record_failure()
         return None
 
     def embed(self, text: str, *, model: str | None = None) -> list[float] | None:
         """Embed a text into a vector. Returns None when unavailable."""
         if self._provider is None:
             return None
+        if not get_breaker("ollama").allow_request():
+            return None
         try:
-            return self._provider.embed(
+            result = self._provider.embed(
                 text=text, model=model or settings.embedding_model
             )
+            get_breaker("ollama").record_success()
+            return result
         except Exception:
+            get_breaker("ollama").record_failure()
             return None
 
 
