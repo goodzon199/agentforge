@@ -87,6 +87,7 @@ class SupplierAttemptStatus(str, enum.Enum):
     pending = "pending"
     succeeded = "succeeded"
     failed = "failed"
+    skipped = "skipped"  # query not supported by the supplier (e.g. no article)
 
 
 class QuoteStatus(str, enum.Enum):

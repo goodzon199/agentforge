@@ -16,6 +16,26 @@ from app.services.task_service import TaskService
 
 _SOURCE_OF_TRUTH_KEY = "processed_message_ids"
 
+_PLACEHOLDER_TOKENS = frozenset(
+    {
+        "", "...", "..", ".", "null", "none", "n/a",
+        "...|null", "...| null", "нет", "не указано",
+        "отсутствует", "неизвестно", "пусто",
+    }
+)
+
+
+def _is_placeholder(value: str) -> bool:
+    """True for empty/echoed-placeholder clarifications that must not be sent
+    to the customer (e.g. the LLM literally returned "...|null" or "null")."""
+    question = (value or "").strip().lower()
+    return (
+        question in _PLACEHOLDER_TOKENS
+        or question.startswith("...")
+        or question.startswith("|")
+        or question.endswith("|null")
+    )
+
 
 @dataclass
 class IntakeOutcome:
@@ -289,8 +309,9 @@ class IntakeService:
 
     def _reply_for_intent(self, result: IntakeResult) -> str:
         intent = result.intent
-        if result.clarification_question:
-            return result.clarification_question
+        question = (result.clarification_question or "").strip()
+        if question and not _is_placeholder(question):
+            return question
         if intent == "order_status":
             return (
                 "Для проверки статуса заказа передам запрос сотруднику отдела продаж."
@@ -303,11 +324,11 @@ class IntakeService:
 
     def _safe_clarification(self, result, missing: list[str]) -> str:
         """Prefer the LLM's clarification unless it is empty or an echoed
-        placeholder (e.g. the model literally returned "...")."""
-        question = (result.clarification_question or "").strip(" .")
-        if len(question) < 3 or question in {"...", "...|null"}:
+        placeholder (e.g. the model literally returned "...|null")."""
+        question = (result.clarification_question or "").strip()
+        if _is_placeholder(question):
             return self._clarification(missing)
-        return result.clarification_question
+        return question
 
     def _clarification(self, missing: list[str]) -> str:
         if "part" in missing:

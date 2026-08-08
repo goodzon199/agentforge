@@ -189,6 +189,65 @@ def test_order_status_creates_no_part_request(db_session, make_conversation):
     assert db_session.scalars(select(PartRequest)).first() is None
 
 
+def test_part_search_placeholder_clarification_falls_back(db_session, make_conversation):
+    from app.models import ConversationMessage
+
+    _, _, conversation, message = make_conversation("Найди масло ngn 5w30 profi")
+    outcome = _process(
+        db_session, conversation, message,
+        _result(vehicle=_veh(), part=_part("моторное масло"), clarification="...|null"),
+    )
+    assert outcome.ready_for_search is False
+    assert outcome.reply != "...|null"
+    assert "автомобил" in outcome.reply.lower()
+
+    agent_msg = db_session.scalars(
+        select(ConversationMessage).where(ConversationMessage.sender_type == "agent")
+    ).first()
+    assert agent_msg is not None
+    assert agent_msg.content == outcome.reply
+    assert agent_msg.content != "...|null"
+
+
+def test_part_search_null_string_clarification_falls_back(db_session, make_conversation):
+    _, _, conversation, message = make_conversation("Найди масло ngn 5w30 profi")
+    outcome = _process(
+        db_session, conversation, message,
+        _result(vehicle=_veh(), part=_part("моторное масло"), clarification="null"),
+    )
+    assert outcome.reply != "null"
+    assert "автомобил" in outcome.reply.lower()
+
+
+def test_other_intent_placeholder_clarification_falls_back(db_session, make_conversation):
+    from app.models import ConversationMessage
+
+    _, _, conversation, message = make_conversation("Сколько стоит?")
+    outcome = _process(
+        db_session, conversation, message,
+        _result(intent="general_question", clarification="...|null"),
+    )
+    assert outcome.action == "replied"
+    assert outcome.reply == "Передал вопрос сотруднику — отвечу в ближайшее время."
+
+    agent_msg = db_session.scalars(
+        select(ConversationMessage).where(ConversationMessage.sender_type == "agent")
+    ).first()
+    assert agent_msg.content == outcome.reply
+
+
+def test_legit_clarification_kept(db_session, make_conversation):
+    _, _, conversation, message = make_conversation("Найди масло")
+    outcome = _process(
+        db_session, conversation, message,
+        _result(
+            vehicle=_veh(), part=_part("моторное масло"),
+            clarification="Укажите марку и модель авто",
+        ),
+    )
+    assert outcome.reply == "Укажите марку и модель авто"
+
+
 def test_complaint_creates_no_part_request(db_session, make_conversation):
     from app.models import PartRequest
 

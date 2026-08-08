@@ -54,3 +54,11 @@ class SupplierParseError(SupplierAdapterError):
     """The provider payload could not be mapped to the platform contract."""
 
     kind = "parse"
+
+
+class SupplierQueryNotSupported(SupplierAdapterError):
+    """The provider cannot search this query (e.g. free text without an
+    article for a part-number-based API). The attempt is skipped, not failed:
+    callers should not count it as a supplier failure."""
+
+    kind = "query_not_supported"

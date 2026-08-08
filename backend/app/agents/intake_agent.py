@@ -176,12 +176,12 @@ class IntakeAgent(BaseAgent):
     def _parse_with_llm(self, text: str) -> IntakeResult | None:
         schema = (
             '{"intent": "part_search|order_status|general_question|complaint|unknown", '
-            '"vehicle": {"vin": "...|null", "brand": "...|null", "model": "...|null", '
-            '"year": 2019|null, "engine": "...|null", "body": "...|null", '
-            '"registration_number": "...|null"}, '
-            '"part": {"name": "...|null", "article": "...|null", "quantity": 1}, '
+            '"vehicle": {"vin": null, "brand": null, "model": null, '
+            '"year": null, "engine": null, "body": null, '
+            '"registration_number": null}, '
+            '"part": {"name": null, "article": null, "quantity": 1}, '
             '"missing_fields": ["vin"], "ready_for_search": false, '
-            '"clarification_question": "...|null", "confidence": 0.8}'
+            '"clarification_question": null, "confidence": 0.8}'
         )
         system_prompt = (
             "Ты — IntakeAgent, специалист по оформлению заявок на запчасти. "
@@ -189,7 +189,9 @@ class IntakeAgent(BaseAgent):
             "Правила: если VIN не указан — ready_for_search=false, в missing_fields добавь "
             "\"vin\"; если не указан автомобиль — \"vehicle\"; если не указана деталь — "
             "\"part\". Не выдумывай VIN, марку или модель. Если сообщение — продолжение "
-            "диалога (например только VIN), intent=part_search. Отвечай ТОЛЬКО одним JSON-объектом."
+            "диалога (например только VIN), intent=part_search. Для отсутствующих данных "
+            "ставь именно JSON null — не пиши текст-заглушки вроде \"...\" или \"...|null\". "
+            "Отвечай ТОЛЬКО одним JSON-объектом."
         )
         for attempt in (1, 2):
             prompt = (
@@ -216,10 +218,35 @@ class IntakeAgent(BaseAgent):
             if parsed is None:
                 continue
             try:
-                return IntakeResult.model_validate(parsed)
+                result = IntakeResult.model_validate(parsed)
             except ValidationError:
                 continue
+            vin = self._extract_vin(text)
+            if vin and not self._result_has_vehicle(result):
+                # A bare VIN string is often missed by small models; the
+                # deterministic extractor is the source of truth for it.
+                return self._parse_rules(text)
+            if vin and result.vehicle is not None and result.vehicle.vin is None:
+                result.vehicle.vin = vin
+                result.missing_fields = [
+                    f for f in result.missing_fields if f != "vin"
+                ]
+            return result
         return None
+
+    @staticmethod
+    def _result_has_vehicle(result: IntakeResult) -> bool:
+        vehicle = result.vehicle
+        if vehicle is None:
+            return False
+        return bool(
+            vehicle.vin
+            or vehicle.brand
+            or vehicle.model
+            or vehicle.year
+            or vehicle.engine
+            or vehicle.registration_number
+        )
 
     @staticmethod
     def _extract_json(content: str) -> dict[str, Any] | None:

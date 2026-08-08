@@ -101,6 +101,76 @@ def test_intake_uses_valid_llm_result(db_session, make_conversation):
     assert any(m.role == "system" for m in fake.last_messages)
 
 
+def test_intake_bare_vin_not_missed_by_llm(db_session, make_conversation):
+    from app.models import PartRequest
+    from app.llm.types import LLMMessage
+
+    payload = json.dumps(
+        {
+            "intent": "part_search",
+            "vehicle": None,
+            "part": None,
+            "missing_fields": ["vin"],
+            "ready_for_search": False,
+            "clarification_question": None,
+            "confidence": 0.9,
+        }
+    )
+
+    class _FakeLLM:
+        available = True
+
+        def chat(self, *, messages: list[LLMMessage], **kwargs):
+            return LLMResponse(content=payload, model="fake")
+
+    agent = _intake_agent(db_session, llm=_FakeLLM())
+    _, _, conversation, message = make_conversation("JTNB11HK803030803")
+    output = _run(agent, conversation, message)
+
+    assert output.data["intent"] == "part_search"
+    part_request = db_session.scalars(select(PartRequest)).first()
+    assert part_request is not None
+    assert part_request.vehicle is not None
+    assert part_request.vehicle.vin == "JTNB11HK803030803"
+    assert "VIN" not in output.response  # does not ask for the VIN again
+    assert "детал" in output.response.lower()
+
+
+def test_intake_injects_vin_llm_missed(db_session, make_conversation):
+    from app.models import PartRequest
+    from app.llm.types import LLMMessage
+
+    payload = json.dumps(
+        {
+            "intent": "part_search",
+            "vehicle": {"brand": "BMW", "model": "X5", "year": 2019},
+            "part": {"name": "передние тормозные колодки", "quantity": 1},
+            "missing_fields": ["vin"],
+            "ready_for_search": False,
+            "clarification_question": None,
+            "confidence": 0.9,
+        }
+    )
+
+    class _FakeLLM:
+        available = True
+
+        def chat(self, *, messages: list[LLMMessage], **kwargs):
+            return LLMResponse(content=payload, model="fake")
+
+    agent = _intake_agent(db_session, llm=_FakeLLM())
+    _, _, conversation, message = make_conversation(
+        "Колодки на BMW X5 2019 VIN WBAKS410900H12345"
+    )
+    output = _run(agent, conversation, message)
+
+    part_request = db_session.scalars(select(PartRequest)).first()
+    assert part_request.vehicle.brand == "BMW"
+    assert part_request.vehicle.model == "X5"
+    assert part_request.vehicle.vin == "WBAKS410900H12345"
+    assert output.data["ready_for_search"] is True
+
+
 def test_intake_falls_back_to_rules_on_invalid_llm(db_session, make_conversation):
     from app.llm.types import LLMMessage
 
