@@ -11,6 +11,7 @@ from app.suppliers import (
     RosskoAdapter,
     SupplierAuthError,
     SupplierConnectionError,
+    SupplierQueryNotSupported,
     SupplierRateLimitError,
     SupplierResponseError,
     SupplierSearchQuery,
@@ -100,6 +101,36 @@ def _settings(server, **overrides: Any) -> dict[str, Any]:
 
 
 # --- Registry / setup ------------------------------------------------------
+
+
+def test_search_free_text_uses_part_name(fake_server):
+    part = _part(
+        "G1", "NGN", "V272085601", "5W-30 PROFI A-LINE (моторное масло)",
+        stocks=_stock("1650.00", "4", "2"),
+    )
+    fake_server.behaviour = lambda path, body, headers: (200, _success(part), {})
+
+    adapter = RosskoAdapter(settings=_settings(fake_server))
+    offers = _run(adapter.search(SupplierSearchQuery(part_name="масло ngn 5w30 profi")))
+
+    assert len(offers) == 1
+    assert offers[0].article == "V272085601"
+    assert "<text>масло ngn 5w30 profi</text>" in fake_server.last_body
+
+
+def test_search_with_no_article_and_no_text_is_rejected_before_http():
+    adapter = RosskoAdapter(
+        name="Rossko",
+        settings={
+            "base_url": "http://127.0.0.1:1",
+            "key1": "K1",
+            "key2": "K2",
+            "delivery_id": "000000002",
+        },
+    )
+    with pytest.raises(SupplierQueryNotSupported):
+        _run(adapter.search(SupplierSearchQuery()))
+    assert adapter.requests_made == 0
 
 
 def test_registry_creates_rossko_adapter():

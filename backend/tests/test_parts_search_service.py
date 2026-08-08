@@ -16,7 +16,7 @@ from app.suppliers.registry import supplier_registry
 @pytest.fixture(autouse=True)
 def _custom_adapters():
     """Make the test-only adapter types visible to the supplier registry."""
-    classes = (_FailingAdapter, _DupAdapter, _EmptyAdapter)
+    classes = (_FailingAdapter, _DupAdapter, _EmptyAdapter, _NoArticleAdapter)
     for cls in classes:
         supplier_registry.register(cls)
     yield
@@ -126,6 +126,15 @@ class _EmptyAdapter(SupplierAdapter):
         return []
 
 
+class _NoArticleAdapter(SupplierAdapter):
+    type = "noarticle"
+
+    async def search(self, query: SupplierSearchQuery) -> list[NormalizedSupplierOffer]:
+        from app.suppliers.errors import SupplierQueryNotSupported
+
+        raise SupplierQueryNotSupported("артикул не указан")
+
+
 def test_search_creates_run_attempts_and_offers(db_session):
     pr = _make_part_request(db_session)
     result = _search(db_session, pr)
@@ -177,6 +186,45 @@ def test_search_no_offers_returns_to_ready(db_session):
     assert result["offers_found"] == 0
     db_session.refresh(pr)
     assert pr.status == PartRequestStatus.ready_for_search
+
+
+def test_unsupported_query_supplier_is_skipped_not_failed(db_session):
+    from app.models.enums import SupplierAttemptStatus
+
+    _add_supplier(db_session, name="Без артикула", adapter_type="noarticle")
+    pr = _make_part_request(db_session, part_name="колодки")
+    result = _search(db_session, pr)
+
+    assert result["status"] == "completed"
+    assert result["offers_found"] == 2
+    assert result["suppliers_succeeded"] == 1
+    assert result["suppliers_failed"] == 0
+
+    run = db_session.scalars(
+        select(SupplierSearchRun).where(SupplierSearchRun.part_request_id == pr.id)
+    ).first()
+    statuses = {a.status.value for a in run.attempts}
+    assert "skipped" in statuses
+    assert "failed" not in statuses
+
+
+def test_unsupported_query_supplier_skipped_when_no_offers_at_all(db_session):
+    from app.models.enums import SupplierAttemptStatus
+
+    _seeded_supplier(db_session).is_active = False
+    db_session.commit()
+    _add_supplier(db_session, name="Без артикула", adapter_type="noarticle")
+    pr = _make_part_request(db_session, part_name="масло")
+    result = _search(db_session, pr)
+
+    assert result["status"] == "completed"
+    assert result["offers_found"] == 0
+    assert result["suppliers_failed"] == 0
+
+    run = db_session.scalars(
+        select(SupplierSearchRun).where(SupplierSearchRun.part_request_id == pr.id)
+    ).first()
+    assert {a.status.value for a in run.attempts} == {"skipped"}
 
 
 def test_search_without_active_suppliers_fails_gracefully(db_session):

@@ -9,23 +9,29 @@ from app.suppliers.normalize import normalize_article
 class MockSupplierAdapter(SupplierAdapter):
     """Stable, deterministic demo supplier.
 
-    Serves a fixed catalog (BREMBO P06089 / TRW GDB2119). Used as the default
-    demo adapter and as a fixture in tests.
+    Serves a small fixed catalog (brake pads). Filters by article when given;
+    otherwise matches the query text against per-item keywords so a request for
+    oil does not return pads. Used as the default demo adapter and as a fixture
+    in tests. Real parts (e.g. engine oil) must come from live suppliers such as
+    Rossko so prices are genuine.
     """
 
     type = "mock"
 
-    CATALOG: list[tuple[str, str, str, str, int, int]] = [
-        # (brand, article, part_name, price, quantity, delivery_days)
-        ("BREMBO", "P06089", "Тормозные колодки передние", "6800.00", 4, 2),
-        ("TRW", "GDB2119", "Тормозные колодки передние", "6100.00", 3, 1),
+    CATALOG: list[tuple[str, str, str, str, int, int, tuple[str, ...]]] = [
+        # (brand, article, part_name, price, quantity, delivery_days, keywords)
+        ("BREMBO", "P06089", "Тормозные колодки передние", "6800.00", 4, 2, ("колодк", "тормозн")),
+        ("TRW", "GDB2119", "Тормозные колодки передние", "6100.00", 3, 1, ("колодк", "тормозн")),
     ]
 
     async def search(self, query: SupplierSearchQuery) -> list[NormalizedSupplierOffer]:
         article = normalize_article(query.article)
+        text = f"{query.part_name} {query.brand}".strip().lower()
         offers: list[NormalizedSupplierOffer] = []
-        for brand, art, name, price, qty, days in self.CATALOG:
+        for brand, art, name, price, qty, days, keywords in self.CATALOG:
             if article and not self._matches(article, normalize_article(art)):
+                continue
+            if not article and text and not any(kw in text for kw in keywords):
                 continue
             offers.append(
                 NormalizedSupplierOffer(

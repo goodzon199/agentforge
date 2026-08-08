@@ -24,10 +24,16 @@ from app.models.enums import (
     SupplierSearchStatus,
 )
 from app.suppliers.base import NormalizedSupplierOffer, SupplierSearchQuery
+from app.suppliers.errors import SupplierQueryNotSupported
 from app.suppliers.normalize import normalize_article
 from app.services.supplier_service import SupplierService
 
 _NEXT_ACTION = "pricing_parts"
+
+# Internal marker returned by _call_adapter when a supplier cannot handle the
+# query (e.g. Rossko has no article to search by). Such attempts are recorded
+# as "skipped" and neither count as success nor as failure.
+_SKIPPED_MARKER = object()
 
 
 def _now() -> datetime:
@@ -95,6 +101,13 @@ class PartsSearchService:
         succeeded = 0
         failed = 0
         for attempt, offers, error, latency in results:
+            if error is _SKIPPED_MARKER:
+                attempt.status = SupplierAttemptStatus.skipped
+                attempt.error = (
+                    "Поставщик пропущен: запрос без артикула не поддерживается."
+                )
+                attempt.completed_at = _now()
+                continue
             if error:
                 attempt.status = SupplierAttemptStatus.failed
                 attempt.error = error[:1000]
@@ -236,7 +249,7 @@ class PartsSearchService:
         suppliers: list[Supplier],
         attempts: list[SupplierSearchAttempt],
         query: SupplierSearchQuery,
-    ) -> list[tuple[SupplierSearchAttempt, list[NormalizedSupplierOffer], str | None, int]]:
+    ) -> list[tuple[SupplierSearchAttempt, list[NormalizedSupplierOffer], Any, int]]:
         loop = asyncio.new_event_loop()
         try:
             return loop.run_until_complete(
@@ -250,7 +263,7 @@ class PartsSearchService:
         suppliers: list[Supplier],
         attempts: list[SupplierSearchAttempt],
         query: SupplierSearchQuery,
-    ) -> list[tuple[SupplierSearchAttempt, list[NormalizedSupplierOffer], str | None, int]]:
+    ) -> list[tuple[SupplierSearchAttempt, list[NormalizedSupplierOffer], Any, int]]:
         tasks = [
             self._call_adapter(supplier, attempt, query)
             for supplier, attempt in zip(suppliers, attempts)
@@ -262,13 +275,16 @@ class PartsSearchService:
         supplier: Supplier,
         attempt: SupplierSearchAttempt,
         query: SupplierSearchQuery,
-    ) -> tuple[SupplierSearchAttempt, list[NormalizedSupplierOffer], str | None, int]:
+    ) -> tuple[SupplierSearchAttempt, list[NormalizedSupplierOffer], Any, int]:
         started = time.monotonic()
         try:
             adapter = SupplierService(self.db).adapter_for(supplier)
             offers = await asyncio.wait_for(adapter.search(query), timeout=self.timeout)
             latency = int((time.monotonic() - started) * 1000)
             return attempt, offers, None, latency
+        except SupplierQueryNotSupported:
+            latency = int((time.monotonic() - started) * 1000)
+            return attempt, [], _SKIPPED_MARKER, latency
         except Exception as exc:  # noqa: BLE001 - one supplier must not break the run
             latency = int((time.monotonic() - started) * 1000)
             return attempt, [], str(exc)[:1000], latency

@@ -45,6 +45,21 @@ def test_mock_adapter_filters_by_article():
     assert offers[0].article == "GDB2119"
 
 
+def test_mock_adapter_oil_query_returns_nothing():
+    # The mock catalog has no oil; oil prices must come from real suppliers (Rossko).
+    adapter = MockSupplierAdapter(name="АвтоТорг")
+    offers = _run(
+        adapter.search(SupplierSearchQuery(part_name="масло ngn 5w30 profi"))
+    )
+    assert offers == []
+
+
+def test_mock_adapter_no_text_match_returns_nothing():
+    adapter = MockSupplierAdapter(name="АвтоТорг")
+    offers = _run(adapter.search(SupplierSearchQuery(part_name="радиатор")))
+    assert offers == []
+
+
 def test_mock_adapter_healthcheck():
     adapter = MockSupplierAdapter(name="АвтоТорг")
     assert _run(adapter.healthcheck()) is True

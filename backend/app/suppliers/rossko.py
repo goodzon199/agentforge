@@ -15,6 +15,7 @@ from app.suppliers.errors import (
     SupplierAuthError,
     SupplierConnectionError,
     SupplierParseError,
+    SupplierQueryNotSupported,
     SupplierRateLimitError,
     SupplierResponseError,
     SupplierTimeoutError,
@@ -148,6 +149,14 @@ class RosskoAdapter(SupplierAdapter):
 
     async def search(self, query: SupplierSearchQuery) -> list[NormalizedSupplierOffer]:
         text = " ".join(filter(None, [query.brand.strip(), query.article.strip()])).strip()
+        if not text:
+            # Rossko searches keywords over part numbers AND product names, so a
+            # free-text query like "масло NGN 5W30 Profi" works without an article.
+            text = query.part_name.strip()
+        if not text:
+            raise SupplierQueryNotSupported(
+                f"Поставщик «{self.name}» не получил ни артикула, ни текста запроса."
+            )
         params: dict[str, str] = {
             "KEY1": self.key1,
             "KEY2": self.key2,
