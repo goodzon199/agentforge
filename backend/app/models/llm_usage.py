@@ -29,6 +29,11 @@ class LLMUsage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("tasks.id", ondelete="SET NULL"), index=True, nullable=True
     )
     model: Mapped[str] = mapped_column(String(120), nullable=False)
+    # Normalized outcome (hotfix 3.4.1): ok / timeout / unavailable /
+    # rate_limited / invalid_response / error. Failed attempts are recorded
+    # too, so analytics can tell a hung provider from a business error.
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="ok")
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

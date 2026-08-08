@@ -29,6 +29,18 @@ class Settings(BaseSettings):
     default_agent_model: str = "gpt-4o-mini"
     default_agent_temperature: float = 0.3
 
+    # LLM reliability (hotfix 3.4.1): one LLM operation must stay well under
+    # the 60s task watchdog, so a hung provider fails fast instead of blocking
+    # a worker thread for the SDK default (10 min).
+    llm_connect_timeout: float = 5.0
+    llm_read_timeout: float = 25.0
+    llm_write_timeout: float = 10.0
+    llm_pool_timeout: float = 5.0
+    # Attempts per logical call (1 = no retry). Transient errors only.
+    llm_max_attempts: int = 2
+    llm_retry_initial_delay: float = 0.5
+    llm_retry_max_delay: float = 3.0
+
     # Embeddings (vector search over the Knowledge Base)
     # Модель эмбеддингов (Ollama: nomic-embed-text / mxbai-embed-large и т.п.).
     # Пустая строка = векторный поиск выключен, работает ключевой fallback.

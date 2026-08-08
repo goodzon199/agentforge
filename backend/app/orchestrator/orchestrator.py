@@ -249,6 +249,20 @@ class Orchestrator:
             (agent.tasks_completed / agent.tasks_total) * 100 if agent.tasks_total else 0.0,
             2,
         )
+        # total_llm_calls is derived from LLMUsage (the single source of truth),
+        # not incremented by hand. Setting (not +=) keeps a re-processed task
+        # from inflating the counter.
+        from sqlalchemy import func
+
+        from app.models import LLMUsage
+
+        db.flush()  # make the just-flushed usage rows visible to the count
+        count = db.scalar(
+            select(func.count())
+            .select_from(LLMUsage)
+            .where(LLMUsage.agent_id == agent.id)
+        )
+        agent.total_llm_calls = int(count or 0)
 
 
 def _now():
