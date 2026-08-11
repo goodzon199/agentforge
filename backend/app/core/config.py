@@ -111,6 +111,17 @@ class Settings(BaseSettings):
     # Per-service overrides, e.g. {"smtp": {"failure_threshold": 3}}.
     circuit_breaker_overrides: dict[str, dict] = {}
 
+    # Distributed circuit breaker (sprint 3.5.1): state lives in Redis so all
+    # worker processes share one view. Keys: agentos:breaker:<name> (state)
+    # and agentos:breaker:<name>:probe (HALF_OPEN distributed lock).
+    breaker_redis_prefix: str = "agentos:breaker"
+    # How long a breaker state survives untouched (after that it resets to
+    # closed — the cluster was idle / all workers died).
+    breaker_state_ttl_seconds: int = 3600
+    # Distributed lock TTL for the single HALF_OPEN probe call. Should cover
+    # the slowest provider call plus a little slack.
+    breaker_probe_lock_ttl_seconds: float = 20.0
+
     # E-mail (SMTP)
     smtp_host: str = ""
     smtp_port: int = 1025

@@ -18,8 +18,20 @@ class RedisClient:
         self._url = url
         self._enabled = enabled and redis_lib is not None
         self._client = (
-            redis_lib.Redis.from_url(url, decode_responses=True) if self._enabled else None
+            redis_lib.Redis.from_url(
+                url,
+                decode_responses=True,
+                socket_connect_timeout=2.0,
+                socket_timeout=5.0,
+            )
+            if self._enabled
+            else None
         )
+
+    @property
+    def raw_client(self):
+        """The underlying redis-py client (None when disabled)."""
+        return self._client
 
     @property
     def available(self) -> bool:

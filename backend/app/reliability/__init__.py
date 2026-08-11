@@ -1,6 +1,8 @@
 from app.reliability.circuit_breaker import (
+    BREAKER_NAMES,
     BreakerState,
     CircuitBreaker,
+    RedisCircuitBreaker,
     breaker_registry,
     get_breaker,
 )
@@ -19,6 +21,7 @@ __all__ = [
     "BREAKER_NAMES",
     "BreakerState",
     "CircuitBreaker",
+    "RedisCircuitBreaker",
     "FAILURE_CODES",
     "FailureKind",
     "RetryPolicy",
@@ -31,6 +34,3 @@ __all__ = [
     "get_breaker",
     "get_policy",
 ]
-
-# The external services protected by a circuit breaker (sprint 3.5).
-BREAKER_NAMES = ("ollama", "rossko", "smtp", "http")

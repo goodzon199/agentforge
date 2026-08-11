@@ -150,6 +150,105 @@ def test_breaker_registry_returns_same_instance(monkeypatch):
     assert "ollama" in breaker_registry.names()
 
 
+# --- Distributed breaker (Redis, sprint 3.5.1) --------------------------------
+
+
+def _redis_breaker(name, **kwargs):
+    """Redis-backed breaker with a unique key; always reset at the end."""
+    from app.reliability.circuit_breaker import RedisCircuitBreaker
+
+    breaker = RedisCircuitBreaker(name, **kwargs)
+    breaker.reset()
+    return breaker
+
+
+def test_redis_breaker_transitions_atomically():
+    from app.reliability.circuit_breaker import RedisCircuitBreaker, get_breaker
+
+    name = f"test-rd-{uuid.uuid4().hex[:8]}"
+    b = _redis_breaker(name, failure_threshold=3, recovery_timeout=1.0)
+
+    assert b.allow_request() is True
+    b.record_failure()
+    b.record_failure()
+    assert b.allow_request() is True  # below threshold
+    b.record_failure()
+    assert b.state.value == "open"
+    assert b.allow_request() is False  # fail fast while recovery pending
+
+    time.sleep(1.1)
+    # Probe allowed, but only one owner at a time (distributed lock).
+    assert b.allow_request() is True
+    assert b.state.value == "half_open"
+    b.record_success()
+    assert b.state.value == "closed"
+
+
+def test_redis_breaker_state_is_shared_between_workers():
+    name = f"test-rd-shared-{uuid.uuid4().hex[:8]}"
+    a = _redis_breaker(name, failure_threshold=2, recovery_timeout=1.0)
+    b = _redis_breaker(name, failure_threshold=2, recovery_timeout=1.0)
+
+    # Two "processes" share one view: worker A trips it, worker B sees OPEN.
+    a.record_failure()
+    b.record_failure()
+    assert a.state.value == "open"
+    assert b.state.value == "open"
+    assert b.allow_request() is False  # worker B fails fast on worker A's state
+
+
+def test_redis_breaker_half_open_probe_lock_is_exclusive():
+    name = f"test-rd-lock-{uuid.uuid4().hex[:8]}"
+    a = _redis_breaker(name, failure_threshold=2, recovery_timeout=1.0)
+    b = _redis_breaker(name, failure_threshold=2, recovery_timeout=1.0)
+
+    a.record_failure()
+    b.record_failure()
+    time.sleep(1.1)
+
+    p1 = a.allow_request()
+    p2 = b.allow_request()
+    assert (p1 or p2) and not (p1 and p2), "both workers probed simultaneously"
+    assert a.state.value == "half_open"
+    # The prober's success closes it for everyone.
+    if p1:
+        a.record_success()
+    else:
+        b.record_success()
+    assert a.state.value == "closed"
+    assert b.state.value == "closed"
+
+
+def test_redis_breaker_falls_back_to_local_when_redis_down(monkeypatch):
+    from app.core import redis as redis_module
+    from app.reliability.circuit_breaker import RedisCircuitBreaker
+
+    name = f"test-rd-fallback-{uuid.uuid4().hex[:8]}"
+    b = _redis_breaker(name, failure_threshold=2, recovery_timeout=1.0)
+    b.reset()
+
+    monkeypatch.setattr(redis_module.redis_client, "_client", None)
+    monkeypatch.setattr(redis_module.redis_client, "_enabled", False)
+
+    # Redis unavailable -> local breaker semantics (still functional).
+    assert b.allow_request() is True
+    b.record_failure()
+    b.record_failure()
+    assert b.state.value == "open"
+
+
+def test_breaker_health_endpoint_reports_redis_state(client, db_session):
+    from app.reliability.circuit_breaker import get_breaker
+
+    name = "ollama"
+    get_breaker(name).reset()
+    res = client.get("/api/v1/analytics/breakers")
+    assert res.status_code == 200
+    by_name = {b["name"]: b for b in res.json()}
+    assert by_name["ollama"]["state"] == "closed"
+    assert by_name["ollama"]["backend"] in ("redis", "local")
+
+
 # --- Failure classification --------------------------------------------------
 
 

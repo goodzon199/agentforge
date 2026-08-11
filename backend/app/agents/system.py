@@ -30,7 +30,7 @@ _ROUTING_RULES: list[tuple[list[str], str]] = [
         "SearchAgent",
     ),
     (
-        ["отправь письмо", "отправь на почту", "email", "письмо", "напиши на почту", "e-mail"],
+        ["send_email", "отправь письмо", "отправь на почту", "email", "письмо", "напиши на почту", "e-mail"],
         "EmailAgent",
     ),
 ]
@@ -39,7 +39,7 @@ _ROUTING_RULES: list[tuple[list[str], str]] = [
 # vertical slice (message -> intake -> search -> pricing -> sales) does not
 # depend on LLM mood.
 _INTERNAL_OBJECTIVES = frozenset(
-    {"process_customer_message", "search_parts", "pricing_parts", "sales_draft"}
+    {"process_customer_message", "search_parts", "pricing_parts", "sales_draft", "send_email"}
 )
 
 
@@ -59,13 +59,7 @@ class SystemAgent(BaseAgent):
 
     def execute(self, objective: str, input_data: dict[str, Any]) -> AgentOutput:
         context = self.recall_context()
-
-        if objective.strip().lower() in _INTERNAL_OBJECTIVES:
-            decision = self._route_deterministic(objective)
-        elif self.llm.available:
-            decision = self._route_with_llm(objective, context)
-        else:
-            decision = self._route_deterministic(objective)
+        decision = self._route(objective, context)
 
         handoff = decision.get("needs_agent")
         if handoff:
@@ -90,6 +84,21 @@ class SystemAgent(BaseAgent):
         )
 
     # --- Routing ----------------------------------------------------------
+
+    def _route(self, objective: str, context: dict[str, object]) -> dict[str, Any]:
+        # Internal pipeline commands are always deterministic.
+        if objective.strip().lower() in _INTERNAL_OBJECTIVES:
+            return self._route_deterministic(objective)
+        # Deterministic keyword rules win over the LLM: internal commands must
+        # never depend on LLM mood (a free-text objective like "отправь письмо"
+        # is still an internal command and must reach the right agent).
+        rule_hit = self._route_deterministic(objective)
+        if rule_hit.get("needs_agent"):
+            return rule_hit
+        # Only unrecognized external free text may consult the LLM.
+        if self.llm.available:
+            return self._route_with_llm(objective, context)
+        return rule_hit
 
     def _route_deterministic(self, objective: str) -> dict[str, Any]:
         text = objective.lower()
