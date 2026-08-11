@@ -476,6 +476,15 @@ class _BreakerRegistry:
         with self._lock:
             return [self.get(n).snapshot() for n in BREAKER_NAMES]
 
+    def snapshot_map(self) -> dict[str, dict[str, Any]]:
+        """One aggregated view: {name: {state, failures, ...}} for every breaker.
+
+        Keys are stable (the BREAKER_NAMES set), so dashboards/alerts can rely
+        on a fixed shape: {"ollama": {"state": "closed", "failures": 0}, ...}.
+        """
+        with self._lock:
+            return {n: self.get(n).snapshot() for n in BREAKER_NAMES}
+
 
 breaker_registry = _BreakerRegistry()
 

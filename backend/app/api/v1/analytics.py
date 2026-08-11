@@ -55,13 +55,14 @@ def pilot_analytics(
     return PilotAnalytics(**data)
 
 
-@router.get("/breakers", response_model=list[dict[str, Any]])
+@router.get("/breakers", response_model=dict[str, Any])
 def breaker_health():
     """Live circuit-breaker state as seen by the shared Redis store.
 
-    Unlike process-local memory this reflects the state aggregated from every
-    worker (an OPEN breaker in one process is OPEN here too).
+    Returns one aggregated snapshot: {"ollama": {"state": "...", "failures": N},
+    ...}. Unlike process-local memory this reflects the state aggregated from
+    every worker (an OPEN breaker in one process is OPEN here too).
     """
     from app.reliability.circuit_breaker import breaker_registry
 
-    return breaker_registry.snapshots()
+    return breaker_registry.snapshot_map()

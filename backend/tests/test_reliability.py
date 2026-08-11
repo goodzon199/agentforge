@@ -186,37 +186,67 @@ def test_redis_breaker_transitions_atomically():
 
 def test_redis_breaker_state_is_shared_between_workers():
     name = f"test-rd-shared-{uuid.uuid4().hex[:8]}"
-    a = _redis_breaker(name, failure_threshold=2, recovery_timeout=1.0)
-    b = _redis_breaker(name, failure_threshold=2, recovery_timeout=1.0)
+    # N workers (A..D) share one Redis-backed view, like N worker processes.
+    workers = [
+        _redis_breaker(name, failure_threshold=3, recovery_timeout=1.0)
+        for _ in range(4)
+    ]
 
-    # Two "processes" share one view: worker A trips it, worker B sees OPEN.
-    a.record_failure()
-    b.record_failure()
-    assert a.state.value == "open"
-    assert b.state.value == "open"
-    assert b.allow_request() is False  # worker B fails fast on worker A's state
+    # Every worker contributes a failure; the breaker trips on the Nth one and
+    # every worker sees the SAME open state afterwards.
+    for i, w in enumerate(workers):
+        w.record_failure()
+        if i >= 2:  # threshold crossed after the 3rd failure
+            assert w.state.value == "open"
+        else:
+            assert w.state.value == "closed"
+
+    # Every worker (including ones that never saw the trip) fails fast.
+    for w in workers:
+        assert w.allow_request() is False, "worker must fail fast on shared OPEN"
+
+    # The failure counter is shared: after enough successes the shared state
+    # recovers for everyone — verify no worker diverged into a private OPEN.
+    for w in workers:
+        assert w.snapshot()["failures"] >= 3
 
 
 def test_redis_breaker_half_open_probe_lock_is_exclusive():
     name = f"test-rd-lock-{uuid.uuid4().hex[:8]}"
-    a = _redis_breaker(name, failure_threshold=2, recovery_timeout=1.0)
-    b = _redis_breaker(name, failure_threshold=2, recovery_timeout=1.0)
+    # N workers hit the recovery timeout at roughly the same instant.
+    workers = [
+        _redis_breaker(name, failure_threshold=2, recovery_timeout=1.0)
+        for _ in range(4)
+    ]
 
-    a.record_failure()
-    b.record_failure()
-    time.sleep(1.1)
+    for w in workers:
+        w.record_failure()
+    for w in workers:
+        w.record_failure()
+    assert all(w.state.value == "open" for w in workers)
 
-    p1 = a.allow_request()
-    p2 = b.allow_request()
-    assert (p1 or p2) and not (p1 and p2), "both workers probed simultaneously"
-    assert a.state.value == "half_open"
+    time.sleep(1.1)  # recovery window open
+
+    # All workers race for the HALF_OPEN probe, but the distributed lock lets
+    # exactly one through.
+    probes = [w.allow_request() for w in workers]
+    assert any(probes), "exactly one worker should win the probe"
+    assert sum(probes) == 1, f"only one worker may probe, got {sum(probes)}"
+
+    # The winner transitions to HALF_OPEN; everyone else reads the shared
+    # HALF_OPEN state too, but their allow_request() returned False (they
+    # never acquired the probe lock).
+    winner = probes.index(True)
+    assert workers[winner].state.value == "half_open"
+    for i, w in enumerate(workers):
+        if i != winner:
+            assert w.state.value == "half_open", "shared state is visible to all"
+            assert probes[i] is False, "non-winner must not probe"
+
     # The prober's success closes it for everyone.
-    if p1:
-        a.record_success()
-    else:
-        b.record_success()
-    assert a.state.value == "closed"
-    assert b.state.value == "closed"
+    workers[winner].record_success()
+    for w in workers:
+        assert w.state.value == "closed"
 
 
 def test_redis_breaker_falls_back_to_local_when_redis_down(monkeypatch):
@@ -244,9 +274,10 @@ def test_breaker_health_endpoint_reports_redis_state(client, db_session):
     get_breaker(name).reset()
     res = client.get("/api/v1/analytics/breakers")
     assert res.status_code == 200
-    by_name = {b["name"]: b for b in res.json()}
+    by_name = res.json()
     assert by_name["ollama"]["state"] == "closed"
     assert by_name["ollama"]["backend"] in ("redis", "local")
+    assert set(by_name) == {"ollama", "rossko", "smtp", "http"}
 
 
 # --- Failure classification --------------------------------------------------

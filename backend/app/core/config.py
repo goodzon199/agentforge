@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+psycopg://agentos:agentos_secret@localhost:5432/agentos"
 
+    # Schema management. Development defaults to True (fast first-run bootstrap);
+    # production must set it to False so schema is managed exclusively by Alembic.
+    # When False, startup verifies the Alembic revision and fails fast if the
+    # database is behind `head`.
+    db_auto_create: bool = True
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
     redis_enabled: bool = True
