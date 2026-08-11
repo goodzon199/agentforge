@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "postgresql+psycopg://agentos:agentos_secret@localhost:5432/agentos"
 
+    # Schema management. Development defaults to True (fast first-run bootstrap);
+    # production must set it to False so schema is managed exclusively by Alembic.
+    # When False, startup verifies the Alembic revision and fails fast if the
+    # database is behind `head`.
+    db_auto_create: bool = True
+
     # Redis
     redis_url: str = "redis://localhost:6379/0"
     redis_enabled: bool = True
@@ -110,6 +116,17 @@ class Settings(BaseSettings):
     circuit_breaker_half_open_max_calls: int = 1
     # Per-service overrides, e.g. {"smtp": {"failure_threshold": 3}}.
     circuit_breaker_overrides: dict[str, dict] = {}
+
+    # Distributed circuit breaker (sprint 3.5.1): state lives in Redis so all
+    # worker processes share one view. Keys: agentos:breaker:<name> (state)
+    # and agentos:breaker:<name>:probe (HALF_OPEN distributed lock).
+    breaker_redis_prefix: str = "agentos:breaker"
+    # How long a breaker state survives untouched (after that it resets to
+    # closed — the cluster was idle / all workers died).
+    breaker_state_ttl_seconds: int = 3600
+    # Distributed lock TTL for the single HALF_OPEN probe call. Should cover
+    # the slowest provider call plus a little slack.
+    breaker_probe_lock_ttl_seconds: float = 20.0
 
     # E-mail (SMTP)
     smtp_host: str = ""

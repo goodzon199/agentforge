@@ -40,19 +40,22 @@ class QueueWorker:
         self._stop.set()
 
     def _run(self) -> None:
-        tick = 0
+        last_sweep = time.monotonic()
         while not self._stop.is_set():
             db = SessionLocal()
             try:
                 orchestrator.poll(db)
-                # Every ~5s sweep for hung tasks / search runs (watchdog).
-                tick += 1
-                if tick % 100 == 0:
+                # Sweep hung tasks / search runs at a fixed wall-clock interval.
+                # A tick counter is unreliable here: poll() blocks up to ~1s in
+                # blpop when the queue is empty, so N ticks != N * sleep.
+                now = time.monotonic()
+                if now - last_sweep >= 5.0:
                     from app.services.parts_search_service import PartsSearchService
                     from app.services.task_service import TaskService
 
                     TaskService(db).mark_stale_tasks()
                     PartsSearchService(db).mark_stale_runs()
+                    last_sweep = now
             except Exception:  # pragma: no cover - worker must survive errors
                 logger.exception("Ошибка в воркере очереди")
                 db.rollback()
