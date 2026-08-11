@@ -37,9 +37,15 @@ class TaskService:
             .where(Task.status.in_([TaskStatus.queued, TaskStatus.running]))
             .where(Task.started_at.isnot(None))
             .where(Task.started_at < threshold)
+            .with_for_update()
         )
         tasks = list(self.db.scalars(stmt).unique().all())
         for task in tasks:
+            # Idempotency guard: several worker threads sweep on the same
+            # wall-clock tick; the first one to lock the row flips it to failed
+            # and later sweepers see it already timed out.
+            if task.error and task.error.startswith("task_timeout"):
+                continue
             task.status = TaskStatus.failed
             task.error = f"task_timeout: превышен лимит {limit:.0f}с на выполнение"
             task.completed_at = datetime.now(timezone.utc)

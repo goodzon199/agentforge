@@ -158,6 +158,30 @@ def test_mark_stale_tasks_watchdog(client, db_session):
     assert data["task_timeouts"] == 1
 
 
+def test_mark_stale_tasks_is_idempotent_across_sweepers(client, db_session):
+    """Several workers may sweep the same tick; the task must get exactly one
+    task_timeout event (guard against duplicate watchdog events)."""
+    from sqlalchemy import func, select
+
+    from app.models import TaskEvent
+    from app.services.task_service import TaskService
+
+    stale = _stale_task(db_session)
+    svc = TaskService(db_session)
+    first = svc.mark_stale_tasks(max_seconds=60)
+    second = svc.mark_stale_tasks(max_seconds=60)
+    third = svc.mark_stale_tasks(max_seconds=60)
+    assert first == 1
+    assert second == 0
+    assert third == 0
+
+    events = db_session.scalars(
+        select(TaskEvent).where(TaskEvent.task_id == stale.id)
+    ).all()
+    timeouts = [e for e in events if e.message.startswith("task_timeout")]
+    assert len(timeouts) == 1
+
+
 def test_mark_stale_search_runs(client, db_session):
     import uuid as uuid_mod
 
