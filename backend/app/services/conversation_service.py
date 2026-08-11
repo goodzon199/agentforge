@@ -173,6 +173,19 @@ class ConversationService:
         # In those modes the agent stays silent and the manager replies instead.
         task_id: uuid.UUID | None = None
         if sender_type == "customer" and self.can_agent_act(conversation):
+            from app.tracing.tracer import begin_trace
+
+            # Start the distributed trace for this request (sprint 3.6). The
+            # root "conversation" span opens here; the worker chain (task,
+            # agents, LLM, suppliers, pricing, quote, order) hangs off it.
+            trace = begin_trace(
+                self.db,
+                company_id=conversation.company_id,
+                conversation_id=conversation.id,
+                source="customer_message",
+                name=f"Сообщение клиента: {content[:60]}",
+            )
+
             task_service = TaskService(self.db)
             task = task_service.create(
                 company_id=conversation.company_id,
@@ -181,7 +194,9 @@ class ConversationService:
                 input_data={
                     "conversation_id": str(conversation.id),
                     "message_id": str(message.id),
+                    "trace_id": str(trace.id),
                 },
+                trace_id=trace.id,
             )
             self.db.add(task)
             self.db.flush()

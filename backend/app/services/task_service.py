@@ -59,6 +59,13 @@ class TaskService:
                 )
             )
         if tasks:
+            # Sessions run with autoflush=False; make the failed status visible
+            # to maybe_finish_trace's count queries before closing the trace.
+            self.db.flush()
+            from app.tracing.tracer import maybe_finish_trace
+
+            for task in tasks:
+                maybe_finish_trace(self.db, task.trace_id)
             self.db.commit()
         return len(tasks)
 
@@ -71,7 +78,12 @@ class TaskService:
         priority: TaskPriority = TaskPriority.normal,
         input_data: dict[str, Any] | None = None,
         agent_id: uuid.UUID | None = None,
+        trace_id: uuid.UUID | None = None,
     ) -> Task:
+        if trace_id is None:
+            from app.tracing.tracer import current_trace_id
+
+            trace_id = current_trace_id()
         task = Task(
             company_id=company_id,
             agent_id=agent_id,
@@ -80,6 +92,7 @@ class TaskService:
             status=TaskStatus.pending,
             priority=priority,
             input_data=input_data or {},
+            trace_id=trace_id,
         )
         self.db.add(task)
         return task
@@ -170,6 +183,7 @@ class TaskService:
             priority=original.priority,
             input_data=dict(original.input_data or {}),
             replayed_from_task_id=original.id,
+            trace_id=original.trace_id,
         )
         self.db.add(task)
         self.db.flush()  # assign task.id before the event references it

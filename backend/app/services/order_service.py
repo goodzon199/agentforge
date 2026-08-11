@@ -58,6 +58,47 @@ class OrderService:
         task_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         """Mark a sent quote as accepted by the customer."""
+        from app.tracing.tracer import record_span, resolve_trace_for_conversation
+
+        trace_id = resolve_trace_for_conversation(
+            self.db,
+            quote.conversation_id,
+            company_id=quote.company_id,
+            source="quote_accept",
+        )
+        try:
+            result = self._accept(quote, user, agent_id=agent_id, task_id=task_id)
+        except Exception as exc:  # noqa: BLE001 - record failure span
+            if trace_id is not None:
+                record_span(
+                    self.db,
+                    "order",
+                    f"Принятие квоты {quote.id}",
+                    trace_id=trace_id,
+                    status="failed",
+                    error_kind=type(exc).__name__,
+                    metadata={"quote_id": str(quote.id)},
+                )
+            raise
+        if trace_id is not None:
+            record_span(
+                self.db,
+                "order",
+                f"Принятие квоты {quote.id}",
+                trace_id=trace_id,
+                status="ok",
+                metadata={"quote_id": str(quote.id), "status": result.get("status")},
+            )
+        return result
+
+    def _accept(
+        self,
+        quote: Quote,
+        user=None,
+        *,
+        agent_id: uuid.UUID | None = None,
+        task_id: uuid.UUID | None = None,
+    ) -> dict[str, Any]:
         if not company_allowed(user, quote.company_id):
             raise ForbiddenError("Квота принадлежит другой компании.")
         if quote.status == QuoteStatus.accepted:
@@ -123,6 +164,56 @@ class OrderService:
         task_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
         """Convert an accepted quote into an Order (manager-only)."""
+        from app.tracing.tracer import record_span, resolve_trace_for_conversation
+
+        trace_id = resolve_trace_for_conversation(
+            self.db,
+            quote.conversation_id,
+            company_id=quote.company_id,
+            source="order_create",
+        )
+        try:
+            result = self._create_from_quote(
+                quote, user, agent_id=agent_id, task_id=task_id
+            )
+        except Exception as exc:  # noqa: BLE001 - record failure span
+            if trace_id is not None:
+                record_span(
+                    self.db,
+                    "order",
+                    f"Создание заказа по квоте {quote.id}",
+                    trace_id=trace_id,
+                    status="failed",
+                    error_kind=type(exc).__name__,
+                    metadata={"quote_id": str(quote.id)},
+                )
+            raise
+        order_id = result.get("order_id")
+        if order_id is not None and not isinstance(order_id, uuid.UUID):
+            try:
+                order_id = uuid.UUID(str(order_id))
+            except (ValueError, TypeError):
+                order_id = None
+        if trace_id is not None:
+            record_span(
+                self.db,
+                "order",
+                f"Заказ {result.get('order_number') or order_id}",
+                trace_id=trace_id,
+                order_id=order_id,
+                status="ok",
+                metadata={"quote_id": str(quote.id)},
+            )
+        return result
+
+    def _create_from_quote(
+        self,
+        quote: Quote,
+        user,
+        *,
+        agent_id: uuid.UUID | None = None,
+        task_id: uuid.UUID | None = None,
+    ) -> dict[str, Any]:
         if not company_allowed(user, quote.company_id):
             raise ForbiddenError("Квота принадлежит другой компании.")
         if user is None or not user.is_superuser:

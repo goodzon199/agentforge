@@ -47,6 +47,13 @@ class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     routing_decision: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     retries: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # Distributed trace this task belongs to (sprint 3.6). Lets the worker
+    # resume a trace started at message ingestion and join sub-tasks
+    # (search/pricing/sales) into one trace.
+    trace_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("traces.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+
     # Set when this task was created by a Replay of another task (sprint 3.5).
     replayed_from_task_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("tasks.id", ondelete="SET NULL"), index=True, nullable=True

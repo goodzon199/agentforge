@@ -216,6 +216,23 @@ class SalesService:
             status=AgentActionStatus.pending,
             idempotency_key=key,
         )
+        from app.tracing.tracer import record_span, resolve_trace_for_conversation
+
+        trace_id = resolve_trace_for_conversation(
+            self.db,
+            quote.conversation_id,
+            company_id=quote.company_id,
+            source="sales_send",
+        )
+        if trace_id is not None:
+            record_span(
+                self.db,
+                "action",
+                f"Отправка предложения клиенту (квота {quote.id})",
+                trace_id=trace_id,
+                status="ok",
+                metadata={"quote_id": str(quote.id)},
+            )
         decision = permissions.evaluate(
             agent=agent_id,
             company=self.db.get(Company, quote.company_id),
@@ -627,6 +644,26 @@ class SalesService:
         )
         self.db.add(approval)
         self.db.flush()
+        from app.tracing.tracer import record_span, resolve_trace_for_conversation
+
+        trace_id = resolve_trace_for_conversation(
+            self.db,
+            quote.conversation_id,
+            company_id=quote.company_id,
+            source="approval",
+        )
+        if trace_id is not None:
+            record_span(
+                self.db,
+                "approval",
+                f"Согласование: {action.action_type}",
+                trace_id=trace_id,
+                status="ok",
+                metadata={
+                    "approval_id": str(approval.id),
+                    "quote_id": str(quote.id),
+                },
+            )
         return approval
 
     def _record_feedback(

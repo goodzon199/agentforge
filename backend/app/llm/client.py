@@ -28,6 +28,9 @@ class TaskLLMProxy:
     def __init__(self, inner) -> None:
         self._inner = inner
         self._usage: list[dict] = []
+        from app.tracing.tracer import SpanRecorder
+
+        self._spans = SpanRecorder()
 
     @property
     def available(self) -> bool:
@@ -82,6 +85,23 @@ class TaskLLMProxy:
                     ),
                 }
             )
+        # Distributed tracing (sprint 3.6): record one llm span per logical
+        # call. The parent is captured at call time (the agent's span).
+        from app.tracing.tracer import current_span_id, current_trace_id
+
+        if current_trace_id() is not None:
+            last = attempts[-1]
+            ok = response is not None and last.get("status") == LLMErrorKind.OK.value
+            self._spans.record(
+                "llm",
+                f"llm.chat({used_model})",
+                status="ok" if ok else last.get("status", "error"),
+                duration_ms=sum(a.get("duration_ms", 0) for a in attempts),
+                trace_id=current_trace_id(),
+                parent_span_id=current_span_id(),
+                metadata={"model": used_model, "attempts": len(attempts)},
+                error_kind=None if ok else last.get("status"),
+            )
         return response
 
     def embed(self, text: str, *, model: str | None = None) -> list[float] | None:
@@ -104,11 +124,13 @@ class TaskLLMProxy:
         from app.models import LLMUsage
 
         if not self._usage:
+            self._spans.clear()
             return 0
         existing = db.scalar(
             select(func.count()).select_from(LLMUsage).where(LLMUsage.task_id == task_id)
         )
         if existing:
+            self._spans.clear()
             return 0
         for u in self._usage:
             db.add(
@@ -125,6 +147,7 @@ class TaskLLMProxy:
                     estimated_cost_rub=u["cost_rub"],
                 )
             )
+        self._spans.flush(db, task_id=task_id)
         return len(self._usage)
 
 

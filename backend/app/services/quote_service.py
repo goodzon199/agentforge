@@ -48,6 +48,31 @@ class QuoteService:
         Returns None when there is nothing priced. A quote that has already
         progressed past approval is never overwritten by a re-price.
         """
+        from app.tracing.tracer import record_span
+
+        quote = self._ensure_from_pricing(
+            part_request, offers=offers, best=best, margin=margin, currency=currency
+        )
+        if quote is not None:
+            record_span(
+                self.db,
+                "quote",
+                f"Квота для заявки {part_request.part_name}",
+                status="ok",
+                duration_ms=0,
+                metadata={"quote_id": str(quote.id), "status": quote.status.value},
+            )
+        return quote
+
+    def _ensure_from_pricing(
+        self,
+        part_request: PartRequest,
+        *,
+        offers: list[SupplierOffer],
+        best: SupplierOffer | None,
+        margin: Decimal,
+        currency: str,
+    ) -> Quote | None:
         priced = [o for o in offers if o.customer_price is not None]
         if not priced:
             return None

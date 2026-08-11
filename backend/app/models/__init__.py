@@ -19,6 +19,7 @@ from app.models.supplier import Supplier
 from app.models.supplier_offer import SupplierOffer
 from app.models.supplier_search import SupplierSearchAttempt, SupplierSearchRun
 from app.models.task import Task, TaskEvent
+from app.models.trace import Span, Trace
 from app.models.user import User
 from app.models.vehicle import Vehicle
 
@@ -50,6 +51,8 @@ __all__ = [
     "SupplierSearchRun",
     "Task",
     "TaskEvent",
+    "Trace",
+    "Span",
     "User",
     "Vehicle",
 ]

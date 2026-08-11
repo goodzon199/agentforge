@@ -49,6 +49,23 @@ class PricingService:
         triggered_by: str = "agent",
     ) -> dict[str, Any]:
         """Price the offers of a search run and persist the result."""
+        from app.tracing.tracer import trace
+
+        with trace(
+            self.db,
+            "pricing",
+            f"Расчёт цены: {part_request_id}",
+            metadata={"part_request_id": str(part_request_id), "run_id": str(run_id) if run_id else None},
+        ):
+            return self._process(part_request_id, run_id, triggered_by=triggered_by)
+
+    def _process(
+        self,
+        part_request_id: uuid.UUID,
+        run_id: uuid.UUID | None = None,
+        *,
+        triggered_by: str = "agent",
+    ) -> dict[str, Any]:
         part_request = self.db.get(PartRequest, part_request_id)
         if part_request is None:
             raise ValueError(f"Заявка {part_request_id} не найдена.")

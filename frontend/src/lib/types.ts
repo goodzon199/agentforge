@@ -89,6 +89,45 @@ export type DashboardStats = {
   logs_total: number;
 };
 
+export type TraceSummary = {
+  id: string;
+  company_id: string | null;
+  conversation_id: string | null;
+  status: string;
+  started_at: string;
+  completed_at: string | null;
+  source: string;
+  created_at: string;
+  span_count: number;
+  error_kinds: string[];
+};
+
+export type SpanNode = {
+  span: {
+    id: string;
+    trace_id: string;
+    parent_span_id: string | null;
+    span_type: string;
+    name: string;
+    agent_id: string | null;
+    task_id: string | null;
+    supplier_id: string | null;
+    order_id: string | null;
+    status: string;
+    started_at: string;
+    finished_at: string | null;
+    duration_ms: number | null;
+    meta: Record<string, unknown>;
+    error_kind: string | null;
+  };
+  children: SpanNode[];
+};
+
+export type TraceTree = {
+  trace: TraceSummary;
+  root: SpanNode | null;
+};
+
 export type ToolInfo = {
   name: string;
   description: string;

@@ -12,7 +12,7 @@ from app.core.redis import redis_client
 from app.llm.client import LLMClient, TaskLLMProxy, llm_client
 from app.memory.service import MemoryService
 from app.models import Agent as AgentRecord
-from app.models import Task, TaskEvent
+from app.models import Task, TaskEvent, Trace
 from app.models.enums import TaskStatus
 from app.orchestrator.messages import ResultMessage, TaskMessage
 from app.reliability.errors import TRANSIENT, FailureKind, classify_exception
@@ -93,6 +93,58 @@ class Orchestrator:
         # to the executing agent (cost/task metric, sprint 3.2).
         llm = TaskLLMProxy(self.llm)
 
+        # Distributed tracing (sprint 3.6): every task joins its trace. Tasks
+        # created from a customer message already carry a trace_id (set in
+        # ConversationService.add_message); ad-hoc API tasks get a fresh trace.
+        from app.tracing.tracer import (
+            bind_db,
+            maybe_finish_trace,
+            resolve_trace_for_conversation,
+            trace,
+            unbind_db,
+        )
+
+        task_span_parent: Any = None
+        if task.trace_id is None:
+            conversation_id = (task.input_data or {}).get("conversation_id")
+            task.trace_id = resolve_trace_for_conversation(
+                db,
+                _as_uuid(conversation_id),
+                company_id=task.company_id,
+                source="manual_task",
+            )
+            db.commit()
+            # resolve_trace_for_conversation opened a fresh trace: nest the
+            # task span under its root conversation span.
+            fresh = db.get(Trace, task.trace_id)
+            task_span_parent = fresh.root_span_id if fresh else None
+        else:
+            # The worker context has no active span stack (the trace was
+            # opened by the API request that created the task), so the task
+            # span must attach to the trace's root span explicitly.
+            existing = db.get(Trace, task.trace_id)
+            task_span_parent = existing.root_span_id if existing else None
+
+        db_token = bind_db(db)
+        try:
+            with trace(
+                db,
+                "task",
+                task.title,
+                trace_id=task.trace_id,
+                parent_span_id=task_span_parent,
+                task_id=task.id,
+                metadata={"objective": task.objective},
+            ):
+                return self._run_pipeline(db, task, llm)
+        finally:
+            unbind_db(db_token)
+            maybe_finish_trace(db, task.trace_id)
+            db.commit()
+
+    def _run_pipeline(self, db: Session, task: Task, llm: TaskLLMProxy) -> Task:
+        from app.tracing.tracer import trace
+
         try:
             agent_record = self._resolve_system_agent(db)
             if agent_record is None:
@@ -113,7 +165,15 @@ class Orchestrator:
                 message=f"Агент {system.name} получил задачу.",
             )
 
-            decision = system.execute(task.objective, task.input_data or {})
+            with trace(
+                db,
+                "agent",
+                f"{system.name} ({system.slug})",
+                task_id=task.id,
+                agent_id=agent_record.id,
+                metadata={"kind": getattr(system, "kind", system.slug)},
+            ):
+                decision = system.execute(task.objective, task.input_data or {})
             system.remember(
                 f"Задача: {task.objective} -> маршрут: {decision.routing_decision}",
                 kind="routing",
@@ -141,7 +201,15 @@ class Orchestrator:
                     llm=llm,
                     db=db,
                 )
-                output = target.execute(task.objective, task.input_data or {})
+                with trace(
+                    db,
+                    "agent",
+                    f"{target_record.name} ({getattr(target, 'kind', target.slug)})",
+                    task_id=task.id,
+                    agent_id=target_record.id,
+                    metadata={"kind": getattr(target, "kind", target.slug)},
+                ):
+                    output = target.execute(task.objective, task.input_data or {})
                 target.remember(
                     f"Задача: {task.objective} -> {output.response}",
                     kind="task_result",
@@ -348,6 +416,20 @@ def _now():
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc)
+
+
+def _as_uuid(value: Any) -> Any:
+    """Coerce a string UUID to uuid.UUID (tolerates None/invalid)."""
+    import uuid
+
+    if value is None:
+        return None
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, TypeError):
+        return None
 
 
 orchestrator = Orchestrator()

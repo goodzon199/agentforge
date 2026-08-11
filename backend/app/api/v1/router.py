@@ -21,6 +21,7 @@ from app.api.v1 import (
     settings,
     suppliers,
     tasks,
+    traces,
 )
 
 api_router = APIRouter()
@@ -49,6 +50,7 @@ for module in (
     actions,
     quotes,
     orders,
+    traces,
 ):
     api_router.include_router(
         module.router,

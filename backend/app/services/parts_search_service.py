@@ -70,6 +70,24 @@ class PartsSearchService:
         triggered_by: str = "agent",
         task_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
+        from app.tracing.tracer import record_span, trace
+
+        with trace(
+            self.db,
+            "supplier",
+            f"Поиск поставщиков: {part_request.part_name}",
+            task_id=task_id,
+            metadata={"part_request_id": str(part_request.id)},
+        ):
+            return self._search(part_request, triggered_by=triggered_by, task_id=task_id)
+
+    def _search(
+        self,
+        part_request: PartRequest,
+        *,
+        triggered_by: str = "agent",
+        task_id: uuid.UUID | None = None,
+    ) -> dict[str, Any]:
         run = SupplierSearchRun(
             part_request_id=part_request.id,
             status=SupplierSearchStatus.running,
@@ -114,18 +132,21 @@ class PartsSearchService:
                     "Поставщик пропущен: запрос без артикула не поддерживается."
                 )
                 attempt.completed_at = _now()
+                self._record_attempt_span(attempt, "skipped", latency)
                 continue
             if error:
                 attempt.status = SupplierAttemptStatus.failed
                 attempt.error = error[:1000]
                 attempt.completed_at = _now()
                 failed += 1
+                self._record_attempt_span(attempt, "failed", latency, error_kind="supplier_failed")
                 continue
             attempt.status = SupplierAttemptStatus.succeeded
             attempt.offers_found = len(offers)
             attempt.latency_ms = latency
             attempt.completed_at = _now()
             succeeded += 1
+            self._record_attempt_span(attempt, "ok", latency)
             collected.extend((attempt, offer) for offer in offers)
 
         deduped = self._apply_supplier_policy(
@@ -237,6 +258,28 @@ class PartsSearchService:
         )
         self.db.add(attempt)
         return attempt
+
+    def _record_attempt_span(
+        self,
+        attempt: SupplierSearchAttempt,
+        status: str,
+        latency_ms: int,
+        *,
+        error_kind: str | None = None,
+    ) -> None:
+        """Attach one supplier span per adapter attempt (sprint 3.6)."""
+        from app.tracing.tracer import record_span
+
+        record_span(
+            self.db,
+            "supplier",
+            f"supplier attempt {attempt.supplier_id}",
+            supplier_id=attempt.supplier_id,
+            duration_ms=latency_ms,
+            status=status,
+            error_kind=error_kind,
+            metadata={"search_run_id": str(attempt.search_run_id)},
+        )
 
     def _build_query(self, part_request: PartRequest) -> SupplierSearchQuery:
         vehicle: Vehicle | None = None
