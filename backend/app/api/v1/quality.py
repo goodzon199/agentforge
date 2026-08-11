@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.api.access import company_scope
 from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.models import PromptVersion, User
@@ -64,7 +65,7 @@ def agent_quality(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    data = AgentQualityService(db).quality(company_id=user.company_id, days=days)
+    data = AgentQualityService(db).quality(company_id=company_scope(user), days=days)
     report = {
         "days": data["days"],
         "agents": [
@@ -163,7 +164,7 @@ def list_prompts(
     db: Session = Depends(get_db),
 ):
     service = PromptService(db)
-    rows = service.list(company_id=user.company_id, agent_kind=agent_kind)
+    rows = service.list(company_id=company_scope(user), agent_kind=agent_kind)
     return [_read_prompt(p) for p in rows]
 
 
@@ -174,7 +175,7 @@ def create_prompt(
     db: Session = Depends(get_db),
 ):
     service = PromptService(db)
-    company_id = payload.company_id or user.company_id
+    company_id = payload.company_id or company_scope(user)
     if payload.company_id is not None and user.company_id is not None:
         if str(payload.company_id) != str(user.company_id):
             raise HTTPException(status_code=403, detail="Недоступно для вашей компании.")

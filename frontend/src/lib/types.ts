@@ -141,7 +141,26 @@ export type User = {
   full_name: string;
   is_active: boolean;
   is_superuser: boolean;
+  company_id: string | null;
   created_at: string;
+};
+
+export type AuditEvent = {
+  id: string;
+  company_id: string | null;
+  user_id: string | null;
+  actor_type: string;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  ip_address: string | null;
+  detail: Record<string, unknown>;
+  created_at: string;
+};
+
+export type AuditList = {
+  total: number;
+  items: AuditEvent[];
 };
 
 export type LoginResponse = {

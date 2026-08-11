@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.api.access import company_scope, ensure_company
 from app.api.deps import get_conversation_service, get_current_user
 from app.models import Conversation, Task, User
 from app.models.enums import ConversationMode
@@ -19,7 +20,6 @@ from app.schemas.conversation import (
     MessageSent,
 )
 from app.services.conversation_service import ConversationService
-from app.services.sales_service import company_allowed
 
 customers_router = APIRouter(prefix="/customers", tags=["customers"])
 conversations_router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -60,15 +60,24 @@ def _message_read(message, task_id: uuid.UUID | None = None) -> MessageRead:
 # --- Customers -------------------------------------------------------------
 
 @customers_router.get("", response_model=list[CustomerRead])
-def list_customers(service: ConversationService = Depends(get_conversation_service)):
-    return [_customer_read(c) for c in service.list_customers()]
+def list_customers(
+    user: User = Depends(get_current_user),
+    service: ConversationService = Depends(get_conversation_service),
+):
+    scope = company_scope(user)
+    customers = service.list_customers()
+    if scope is None:
+        return [_customer_read(c) for c in customers]
+    return [_customer_read(c) for c in customers if c.company_id == scope]
 
 
 @customers_router.post("", response_model=CustomerRead, status_code=201)
 def create_customer(
     payload: CustomerCreate,
+    user: User = Depends(get_current_user),
     service: ConversationService = Depends(get_conversation_service),
 ):
+    ensure_company(user, payload.company_id)
     customer = service.create_customer(**payload.model_dump())
     service.db.commit()
     service.db.refresh(customer)
@@ -80,16 +89,22 @@ def create_customer(
 @conversations_router.get("", response_model=list[ConversationRead])
 def list_conversations(
     company_id: uuid.UUID | None = None,
+    user: User = Depends(get_current_user),
     service: ConversationService = Depends(get_conversation_service),
 ):
+    scope = company_scope(user)
+    if scope is not None:
+        company_id = scope
     return [_conversation_read(c) for c in service.list_conversations(company_id)]
 
 
 @conversations_router.post("", response_model=ConversationRead, status_code=201)
 def create_conversation(
     payload: ConversationCreate,
+    user: User = Depends(get_current_user),
     service: ConversationService = Depends(get_conversation_service),
 ):
+    ensure_company(user, payload.company_id)
     if service.get_customer(payload.customer_id) is None:
         raise HTTPException(status_code=404, detail="Клиент не найден")
     conversation = service.create_conversation(**payload.model_dump())
@@ -101,11 +116,10 @@ def create_conversation(
 @conversations_router.get("/{conversation_id}", response_model=ConversationDetail)
 def get_conversation(
     conversation_id: uuid.UUID,
+    user: User = Depends(get_current_user),
     service: ConversationService = Depends(get_conversation_service),
 ):
-    conversation = service.get_conversation(conversation_id)
-    if conversation is None:
-        raise HTTPException(status_code=404, detail="Диалог не найден")
+    conversation = _get_scoped_conversation(conversation_id, service, user)
     return ConversationDetail(
         **_conversation_read(conversation).model_dump(),
         messages=[_message_read(m) for m in conversation.messages],
@@ -122,8 +136,7 @@ def _get_scoped_conversation(
     conversation = service.get_conversation(conversation_id)
     if conversation is None:
         raise HTTPException(status_code=404, detail="Диалог не найден")
-    if not company_allowed(user, conversation.company_id):
-        raise HTTPException(status_code=403, detail="Диалог принадлежит другой компании")
+    ensure_company(user, conversation.company_id)
     return conversation
 
 
@@ -201,10 +214,10 @@ def reopen_conversation(
 @conversations_router.get("/{conversation_id}/messages", response_model=list[MessageRead])
 def list_messages(
     conversation_id: uuid.UUID,
+    user: User = Depends(get_current_user),
     service: ConversationService = Depends(get_conversation_service),
 ):
-    if service.get_conversation(conversation_id) is None:
-        raise HTTPException(status_code=404, detail="Диалог не найден")
+    _get_scoped_conversation(conversation_id, service, user)
     return [_message_read(m) for m in service.list_messages(conversation_id)]
 
 
@@ -214,11 +227,10 @@ def list_messages(
 def send_message(
     conversation_id: uuid.UUID,
     payload: MessageCreate,
+    user: User = Depends(get_current_user),
     service: ConversationService = Depends(get_conversation_service),
 ):
-    conversation = service.get_conversation(conversation_id)
-    if conversation is None:
-        raise HTTPException(status_code=404, detail="Диалог не найден")
+    conversation = _get_scoped_conversation(conversation_id, service, user)
 
     message, task_id = service.add_message(
         conversation,

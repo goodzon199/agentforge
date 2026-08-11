@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.deps import get_conversation_service
+from app.core.config import settings
+from app.core.rate_limit import RateLimiter
 from app.schemas.chat import (
     PublicChatMessageIn,
     PublicChatMessageRead,
@@ -17,6 +19,8 @@ from app.services.chat_service import ChatError, WebchatService
 from app.services.conversation_service import ConversationService
 
 router = APIRouter(prefix="/public/chat", tags=["public-chat"])
+
+_limiter = RateLimiter()
 
 
 def _service(db) -> WebchatService:
@@ -35,8 +39,20 @@ def _message_read(message) -> PublicChatMessageRead:
 @router.post("/start", response_model=PublicChatStarted)
 def start_chat(
     payload: PublicChatStart,
+    request: Request,
     conversation_service: ConversationService = Depends(get_conversation_service),
 ):
+    client_ip = request.client.host if request.client else "unknown"
+    bucket = f"{payload.client_key or 'anon'}:{client_ip}"
+    if not _limiter.hit(
+        f"rate:chat:start:{bucket}",
+        settings.chat_rate_per_minute,
+        settings.chat_rate_window_seconds,
+    ):
+        raise HTTPException(
+            status_code=429,
+            detail="Слишком много новых чатов. Попробуйте позже.",
+        )
     service = _service(conversation_service.db)
     try:
         conversation, customer = service.start(
@@ -62,8 +78,29 @@ def start_chat(
 @router.post("/messages", response_model=PublicChatSent, status_code=201)
 def send_public_message(
     payload: PublicChatMessageIn,
+    request: Request,
     conversation_service: ConversationService = Depends(get_conversation_service),
 ):
+    client_ip = request.client.host if request.client else "unknown"
+    bucket = f"{getattr(payload, 'client_key', None) or 'anon'}:{client_ip}"
+    if not _limiter.hit(
+        f"rate:chat:min:{bucket}",
+        settings.chat_rate_per_minute,
+        settings.chat_rate_window_seconds,
+    ):
+        raise HTTPException(
+            status_code=429,
+            detail="Слишком много сообщений. Попробуйте через минуту.",
+        )
+    if not _limiter.hit(
+        f"rate:chat:day:{bucket}",
+        settings.chat_rate_per_day,
+        86_400,
+    ):
+        raise HTTPException(
+            status_code=429,
+            detail="Достигнут дневной лимит сообщений.",
+        )
     service = _service(conversation_service.db)
     conversation = conversation_service.get_conversation(payload.conversation_id)
     if conversation is None:

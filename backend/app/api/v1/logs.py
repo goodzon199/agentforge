@@ -4,9 +4,10 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_task_service
+from app.api.access import company_scope
+from app.api.deps import get_current_user, get_task_service
 from app.core.database import get_db
-from app.models import TaskEvent
+from app.models import Task, TaskEvent, User
 from app.schemas.task import TaskEventRead
 from app.services.task_service import TaskService
 
@@ -19,10 +20,14 @@ def list_logs(
     source: str | None = None,
     limit: int = 200,
     offset: int = 0,
+    user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
     service: TaskService = Depends(get_task_service),
 ):
     stmt = select(TaskEvent).order_by(TaskEvent.created_at.desc()).offset(offset).limit(limit)
+    scope = company_scope(user)
+    if scope is not None:
+        stmt = stmt.join(Task, TaskEvent.task_id == Task.id).where(Task.company_id == scope)
     if level:
         stmt = stmt.where(TaskEvent.level == level)
     if source:

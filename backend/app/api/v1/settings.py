@@ -6,12 +6,14 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_agent_service
+from app.api.access import ensure_company
+from app.api.deps import get_agent_service, get_current_user
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.redis import redis_client
 from app.llm.client import llm_client
 from app.memory.service import MemoryService
+from app.models import User
 from app.schemas.common import InfoResponse, MessageResponse
 from app.schemas.settings import MemoryContextRead, MemoryWrite, ToolRead
 from app.services.agent_service import AgentService
@@ -40,12 +42,14 @@ def list_tools():
 @router.get("/agents/{agent_id}/memory", response_model=MemoryContextRead)
 def agent_memory_context(
     agent_id: uuid.UUID,
+    user: User = Depends(get_current_user),
     service: AgentService = Depends(get_agent_service),
     db: Session = Depends(get_db),
 ):
     agent = service.get(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Агент не найден")
+    ensure_company(user, agent.company_id)
     memory = MemoryService(db)
     return memory.build_context(agent)
 
@@ -54,12 +58,14 @@ def agent_memory_context(
 def write_agent_memory(
     agent_id: uuid.UUID,
     payload: MemoryWrite,
+    user: User = Depends(get_current_user),
     service: AgentService = Depends(get_agent_service),
     db: Session = Depends(get_db),
 ):
     agent = service.get(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Агент не найден")
+    ensure_company(user, agent.company_id)
     memory = MemoryService(db)
     if payload.memory_type == "knowledge":
         memory.remember_knowledge(

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.core import permissions
 from app.models import AgentAction, Company, Conversation, Order, PartRequest, Quote
 from app.models.enums import AgentActionStatus, OrderStatus, QuoteStatus
+from app.services.audit_service import AuditService
 from app.services.sales_service import (
     ConflictError,
     ForbiddenError,
@@ -123,6 +124,15 @@ class OrderService:
             input_data={"quote_id": str(quote.id)},
             result_data={"status": QuoteStatus.accepted.value},
             status=AgentActionStatus.executed,
+        )
+        AuditService(self.db).record(
+            action="quote.accept",
+            entity_type="quote",
+            entity_id=str(quote.id),
+            company_id=quote.company_id,
+            user_id=user.id if user is not None else None,
+            actor_type="user" if user is not None else "agent",
+            detail={"quote_id": str(quote.id)},
         )
         self.db.commit()
         return {
@@ -291,6 +301,19 @@ class OrderService:
                 },
             )
 
+        AuditService(self.db).record(
+            action="order.create",
+            entity_type="order",
+            entity_id=str(order.id),
+            company_id=order.company_id,
+            user_id=user.id if user is not None else None,
+            detail={
+                "order_number": order.order_number,
+                "quote_id": str(quote.id),
+                "total": str(order.order_total),
+                "currency": order.currency,
+            },
+        )
         self.db.commit()
         return {
             "order_id": str(order.id),

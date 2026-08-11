@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.access import company_scope
 from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.models import User
@@ -51,7 +52,7 @@ def pilot_analytics(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    data = AnalyticsService(db).pilot(company_id=user.company_id, days=days)
+    data = AnalyticsService(db).pilot(company_id=company_scope(user), days=days)
     return PilotAnalytics(**data)
 
 

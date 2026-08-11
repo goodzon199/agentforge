@@ -139,6 +139,7 @@ class Settings(BaseSettings):
 
     # Auth (JWT)
     # В production обязательно переопределите JWT_SECRET (>= 32 байта).
+    # The dev default is rejected in production (fail-fast at startup).
     jwt_secret: str = "dev-only-agentforge-jwt-secret-change-me-9f3a1c"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24 * 7  # 7 дней
@@ -148,6 +149,29 @@ class Settings(BaseSettings):
     seed_admin_email: str = "admin@agentos.local"
     seed_admin_password: str = "admin123"
     seed_admin_name: str = "Администратор"
+
+    # --- Security / production hardening (sprint 3.7) ----------------------
+    # Minimum password length enforced on user creation / password change.
+    min_password_length: int = 8
+    # CORS: comma-separated list of allowed origins. "*" is refused together
+    # with credentials (insecure); an explicit list is expected in production.
+    cors_origins: str = "http://localhost:3000"
+    # Maximum accepted request body size (bytes). Larger bodies get 413.
+    max_request_body_bytes: int = 1_048_576  # 1 MiB
+    # Comma-separated Content-Security-Policy fragments applied in production
+    # (left empty in development so Swagger UI keeps working).
+    security_csp: str = "default-src 'self'"
+
+    # Login throttle (brute-force protection).
+    login_rate_per_minute: int = 20
+    login_rate_window_seconds: int = 60
+    login_failures_before_lock: int = 5
+    login_lock_seconds: int = 900  # 15 минут
+
+    # Public webchat rate limits (abuse protection).
+    chat_rate_per_minute: int = 30
+    chat_rate_per_day: int = 300
+    chat_rate_window_seconds: int = 60
 
     @property
     def is_llm_available(self) -> bool:

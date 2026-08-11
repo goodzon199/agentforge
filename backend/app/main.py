@@ -9,6 +9,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import Base, SessionLocal, engine
+from app.core.middleware import (
+    RequestBodySizeLimitMiddleware,
+    RequestLoggingMiddleware,
+    SecurityHeadersMiddleware,
+)
 
 logger = logging.getLogger("agentforge")
 logging.basicConfig(
@@ -99,6 +104,9 @@ def _init_database() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from app.core.security import validate_production_settings
+
+    validate_production_settings()
     _init_database()
 
     from app.orchestrator.worker import worker
@@ -109,20 +117,39 @@ async def lifespan(app: FastAPI):
     worker.stop()
 
 
+_allow_all = "*"
+
+
+def _cors_origins() -> list[str]:
+    raw = settings.cors_origins.strip()
+    if not raw or raw == "*":
+        return [_allow_all]
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
 app = FastAPI(
     title="AgentForge API",
     description="Операционная система для цифровых сотрудников.",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url="/docs" if settings.environment != "production" else None,
+    redoc_url="/redoc" if settings.environment != "production" else None,
 )
 
+cors_origins = _cors_origins()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials=("*" not in cors_origins),
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Middleware order: outermost first. Request logging wraps everything so every
+# request (even rejected ones) is logged with a correlation id.
+app.add_middleware(RequestLoggingMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestBodySizeLimitMiddleware)
 
 app.include_router(api_router, prefix=settings.api_v1_prefix)
 

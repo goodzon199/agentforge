@@ -5,8 +5,13 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.security import hash_password, verify_password
+from app.core.security import (
+    hash_password,
+    validate_password_strength,
+    verify_password,
+)
 from app.models import User
+from app.services.audit_service import AuditService
 
 
 class UserService:
@@ -29,6 +34,7 @@ class UserService:
         is_superuser: bool = False,
         company_id=None,
     ) -> User:
+        validate_password_strength(password)
         user = User(
             email=email.lower(),
             full_name=full_name,
@@ -38,6 +44,14 @@ class UserService:
             company_id=company_id,
         )
         self.db.add(user)
+        AuditService(self.db).record(
+            action="user.create",
+            entity_type="user",
+            entity_id=str(user.id),
+            company_id=company_id,
+            actor_type="system",
+            detail={"email": user.email, "is_superuser": is_superuser},
+        )
         return user
 
     def authenticate(self, email: str, password: str) -> User | None:
@@ -55,5 +69,6 @@ class UserService:
             "full_name": user.full_name,
             "is_active": user.is_active,
             "is_superuser": user.is_superuser,
+            "company_id": str(user.company_id) if user.company_id else None,
             "created_at": user.created_at.isoformat(),
         }

@@ -27,6 +27,7 @@ from app.models.enums import (
     ApprovalStatus,
     QuoteStatus,
 )
+from app.services.audit_service import AuditService
 from app.services.conversation_service import ConversationService
 from app.services.quote_guard import quote_guard
 
@@ -66,9 +67,9 @@ def _is_expired(expires_at: datetime | None) -> bool:
 def company_allowed(user, company_id) -> bool:
     """A user may only act on resources of their own company; a user without
     a company (unscoped) is treated as global."""
-    if user is None or user.company_id is None:
-        return True
-    return str(user.company_id) == str(company_id)
+    from app.api.access import company_allowed as _company_allowed
+
+    return _company_allowed(user, company_id)
 
 
 def _dec(value: Any) -> Decimal:
@@ -322,6 +323,14 @@ class SalesService:
 
         result = self._perform_send(quote, final, approval=approval, action=action)
         self._record_feedback(quote, approval, action, final)
+        AuditService(self.db).record(
+            action="approval.approve",
+            entity_type="approval",
+            entity_id=str(approval.id),
+            company_id=approval.company_id,
+            user_id=user.id,
+            detail={"quote_id": str(quote.id) if quote.id else None},
+        )
         self.db.commit()
 
         return {
@@ -417,6 +426,14 @@ class SalesService:
             action.status = AgentActionStatus.cancelled
 
         self._record_feedback(quote, approval, action, final_output=None, rejected=True)
+        AuditService(self.db).record(
+            action="approval.reject",
+            entity_type="approval",
+            entity_id=str(approval.id),
+            company_id=approval.company_id,
+            user_id=user.id,
+            detail={"reason": reason or None},
+        )
         self.db.commit()
 
         return {

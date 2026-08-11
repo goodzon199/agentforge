@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Task, TaskEvent
 from app.models.enums import TaskPriority, TaskStatus
+from app.services.audit_service import AuditService
 
 
 class TaskService:
@@ -205,6 +206,16 @@ class TaskService:
         if dead is not None and dead.replayed_task_id is None:
             dead.replayed_task_id = task.id
 
+        AuditService(self.db).record(
+            action="task.replay",
+            entity_type="task",
+            entity_id=str(task.id),
+            company_id=task.company_id,
+            detail={
+                "replayed_from_task_id": str(original.id),
+                "title": task.title,
+            },
+        )
         self.db.commit()
         self.db.refresh(task)
         return task

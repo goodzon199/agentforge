@@ -16,6 +16,7 @@ class UserRead(ORMModel):
     full_name: str
     is_active: bool
     is_superuser: bool
+    company_id: str | None = None
     created_at: str
 
 

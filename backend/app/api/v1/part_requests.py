@@ -4,12 +4,14 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.api.access import company_scope, ensure_company
 from app.api.deps import (
+    get_current_user,
     get_part_request_service,
     get_parts_search_service,
     get_pricing_service,
 )
-from app.models import PartRequest
+from app.models import PartRequest, User
 from app.models.enums import PartRequestStatus
 from app.schemas.part_request import (
     PartQuoteRead,
@@ -110,6 +112,7 @@ def list_part_requests(
     conversation_id: uuid.UUID | None = None,
     company_id: uuid.UUID | None = None,
     status: str | None = None,
+    user: User = Depends(get_current_user),
     service: PartRequestService = Depends(get_part_request_service),
 ):
     status_enum = None
@@ -118,6 +121,9 @@ def list_part_requests(
             status_enum = PartRequestStatus(status)
         except ValueError:
             raise HTTPException(status_code=422, detail="Некорректный статус")
+    scope = company_scope(user)
+    if scope is not None:
+        company_id = scope
     requests = service.list(
         company_id=company_id,
         conversation_id=conversation_id,
@@ -126,26 +132,31 @@ def list_part_requests(
     return [_read(pr) for pr in requests]
 
 
-@router.get("/{part_request_id}", response_model=PartRequestRead)
-def get_part_request(
-    part_request_id: uuid.UUID,
-    service: PartRequestService = Depends(get_part_request_service),
-):
+def _load_part_request(part_request_id: uuid.UUID, service: PartRequestService, user: User) -> PartRequest:
     part_request = service.get(part_request_id)
     if part_request is None:
         raise HTTPException(status_code=404, detail="Заявка не найдена")
-    return _read(part_request)
+    ensure_company(user, part_request.company_id)
+    return part_request
+
+
+@router.get("/{part_request_id}", response_model=PartRequestRead)
+def get_part_request(
+    part_request_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    service: PartRequestService = Depends(get_part_request_service),
+):
+    return _read(_load_part_request(part_request_id, service, user))
 
 
 @router.patch("/{part_request_id}", response_model=PartRequestRead)
 def update_part_request(
     part_request_id: uuid.UUID,
     payload: PartRequestUpdate,
+    user: User = Depends(get_current_user),
     service: PartRequestService = Depends(get_part_request_service),
 ):
-    part_request = service.get(part_request_id)
-    if part_request is None:
-        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    part_request = _load_part_request(part_request_id, service, user)
     updates = payload.model_dump(exclude_unset=True)
     if "status" in updates and updates["status"] is not None:
         try:
@@ -164,22 +175,22 @@ def update_part_request(
 @router.get("/{part_request_id}/offers", response_model=list[SupplierOfferRead])
 def list_offers(
     part_request_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    part_service: PartRequestService = Depends(get_part_request_service),
     service: PartsSearchService = Depends(get_parts_search_service),
 ):
-    if service.db.get(PartRequest, part_request_id) is None:
-        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    part_request = _load_part_request(part_request_id, part_service, user)
     return [_offer_read(o) for o in service.list_offers(part_request_id)]
 
 
 @router.post("/{part_request_id}/search", response_model=PartSearchResult)
 def run_search(
     part_request_id: uuid.UUID,
+    user: User = Depends(get_current_user),
     part_service: PartRequestService = Depends(get_part_request_service),
     search_service: PartsSearchService = Depends(get_parts_search_service),
 ):
-    part_request = part_service.get(part_request_id)
-    if part_request is None:
-        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    part_request = _load_part_request(part_request_id, part_service, user)
     result = search_service.search(part_request, triggered_by="user")
     return PartSearchResult(**result)
 
@@ -189,10 +200,11 @@ def run_search(
 )
 def list_search_runs(
     part_request_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    part_service: PartRequestService = Depends(get_part_request_service),
     service: PartsSearchService = Depends(get_parts_search_service),
 ):
-    if service.db.get(PartRequest, part_request_id) is None:
-        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    part_request = _load_part_request(part_request_id, part_service, user)
     return [_run_read(r) for r in service.list_runs(part_request_id)]
 
 
@@ -202,11 +214,11 @@ def list_search_runs(
 @router.post("/{part_request_id}/price", response_model=PartQuoteRead)
 def run_pricing(
     part_request_id: uuid.UUID,
+    user: User = Depends(get_current_user),
     part_service: PartRequestService = Depends(get_part_request_service),
     pricing_service: PricingService = Depends(get_pricing_service),
 ):
-    if part_service.get(part_request_id) is None:
-        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    part_request = _load_part_request(part_request_id, part_service, user)
     summary = pricing_service.process(part_request_id, triggered_by="user")
     return PartQuoteRead(**summary)
 
@@ -214,10 +226,10 @@ def run_pricing(
 @router.get("/{part_request_id}/quote", response_model=PartQuoteRead)
 def get_quote(
     part_request_id: uuid.UUID,
+    user: User = Depends(get_current_user),
     part_service: PartRequestService = Depends(get_part_request_service),
     pricing_service: PricingService = Depends(get_pricing_service),
 ):
-    if part_service.get(part_request_id) is None:
-        raise HTTPException(status_code=404, detail="Заявка не найдена")
+    part_request = _load_part_request(part_request_id, part_service, user)
     summary = pricing_service.summary(part_request_id)
     return PartQuoteRead(**summary)

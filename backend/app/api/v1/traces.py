@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.access import company_scope, ensure_company
 from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.models import Span, Trace, User
@@ -42,6 +43,9 @@ def list_traces(
         .offset(offset)
         .limit(limit)
     )
+    scope = company_scope(current_user)
+    if scope is not None:
+        stmt = stmt.where(Trace.company_id == scope)
     if status:
         stmt = stmt.where(Trace.status == status)
     if source:
@@ -74,6 +78,7 @@ def get_trace(
     trace = db.get(Trace, trace_id)
     if trace is None:
         raise HTTPException(status_code=404, detail="Trace not found")
+    ensure_company(current_user, trace.company_id)
 
     spans = list(trace.spans)
     children_by_parent: dict[uuid.UUID | None, list[Span]] = {}
