@@ -84,11 +84,13 @@ class Span(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     task_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("tasks.id", ondelete="SET NULL"), index=True, nullable=True
     )
+    # Sprint 5.0: suppliers/orders live in the autoparts service. These are
+    # plain UUID columns (cross-service refs carry no FK, manifest §4).
     supplier_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("suppliers.id", ondelete="SET NULL"), index=True, nullable=True
+        index=True, nullable=True
     )
     order_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("orders.id", ondelete="SET NULL"), index=True, nullable=True
+        index=True, nullable=True
     )
 
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="running")

@@ -2,7 +2,6 @@ from app.core.database import Base
 from app.models.agent import Agent, AgentTool
 from app.models.agent_action import AgentAction
 from app.models.agent_feedback import AgentFeedback
-from app.models.approval_request import ApprovalRequest
 from app.models.audit_event import AuditEvent
 from app.models.company import Company
 from app.models.company_policy import CompanyPolicy
@@ -22,7 +21,6 @@ __all__ = [
     "AgentAction",
     "AgentFeedback",
     "AgentTool",
-    "ApprovalRequest",
     "AuditEvent",
     "Base",
     "Company",
