@@ -4,8 +4,9 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.api.deps import get_agent_service, get_company_service
-from app.models import Agent
+from app.api.access import company_scope, ensure_company
+from app.api.deps import get_agent_service, get_company_service, get_current_user
+from app.models import Agent, User
 from app.schemas.agent import AgentCreate, AgentRead, AgentStatusUpdate, AgentUpdate
 from app.services.agent_service import AgentService
 from app.services.company_service import CompanyService
@@ -47,18 +48,24 @@ def _require_company(company_id: uuid.UUID, service: CompanyService) -> None:
 @router.get("", response_model=list[AgentRead])
 def list_agents(
     company_id: uuid.UUID | None = None,
+    user: User = Depends(get_current_user),
     service: AgentService = Depends(get_agent_service),
 ):
+    scope = company_scope(user)
+    if scope is not None:
+        company_id = scope
     return [_read(a) for a in service.list(company_id)]
 
 
 @router.post("", response_model=AgentRead, status_code=201)
 def create_agent(
     payload: AgentCreate,
+    user: User = Depends(get_current_user),
     service: AgentService = Depends(get_agent_service),
     company_service: CompanyService = Depends(get_company_service),
 ):
     _require_company(payload.company_id, company_service)
+    ensure_company(user, payload.company_id)
     if service.get_by_slug(payload.slug):
         raise HTTPException(status_code=409, detail="Агент с таким slug уже существует")
     data = payload.model_dump(exclude={"tool_names"})
@@ -71,11 +78,13 @@ def create_agent(
 @router.get("/{agent_id}", response_model=AgentRead)
 def get_agent(
     agent_id: uuid.UUID,
+    user: User = Depends(get_current_user),
     service: AgentService = Depends(get_agent_service),
 ):
     agent = service.get(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Агент не найден")
+    ensure_company(user, agent.company_id)
     return _read(agent)
 
 
@@ -83,11 +92,13 @@ def get_agent(
 def update_agent(
     agent_id: uuid.UUID,
     payload: AgentUpdate,
+    user: User = Depends(get_current_user),
     service: AgentService = Depends(get_agent_service),
 ):
     agent = service.get(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Агент не найден")
+    ensure_company(user, agent.company_id)
     data = payload.model_dump(exclude_unset=True)
     tool_names = data.pop("tool_names", None)
     if tool_names is not None:
@@ -109,11 +120,13 @@ def _new_tool(agent_id: uuid.UUID, tool_name: str):
 def set_agent_status(
     agent_id: uuid.UUID,
     payload: AgentStatusUpdate,
+    user: User = Depends(get_current_user),
     service: AgentService = Depends(get_agent_service),
 ):
     agent = service.get(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Агент не найден")
+    ensure_company(user, agent.company_id)
     service.set_status(agent, payload.status)
     service.db.commit()
     service.db.refresh(agent)
@@ -123,10 +136,12 @@ def set_agent_status(
 @router.delete("/{agent_id}", status_code=204)
 def delete_agent(
     agent_id: uuid.UUID,
+    user: User = Depends(get_current_user),
     service: AgentService = Depends(get_agent_service),
 ):
     agent = service.get(agent_id)
     if agent is None:
         raise HTTPException(status_code=404, detail="Агент не найден")
+    ensure_company(user, agent.company_id)
     service.db.delete(agent)
     service.db.commit()

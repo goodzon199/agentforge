@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
+
 from app.llm.providers.base import BaseLLMProvider
 from app.llm.types import LLMMessage, LLMResponse
 
@@ -16,14 +18,35 @@ except ImportError:  # pragma: no cover
 class OpenAIProvider(BaseLLMProvider):
     """
     OpenAI / compatible (Azure, Ollama via /v1, local) chat provider.
+
+    ``timeout`` mirrors the hotfix 3.4.1 budget (connect 5s, read 25s,
+    write 10s, pool 5s) so a hung upstream fails fast. ``max_retries`` is kept
+    at 0 here: retries are handled by the client so every attempt is visible
+    to usage tracking instead of being swallowed inside the SDK.
     """
 
     name = "openai"
 
-    def __init__(self, api_key: str, base_url: str) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str,
+        *,
+        timeout: httpx.Timeout | float | None = None,
+        max_retries: int = 0,
+    ) -> None:
         if not _OPENAI_IMPORTABLE:
             raise RuntimeError("The 'openai' package is not installed.")
-        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        if timeout is None:
+            timeout = httpx.Timeout(
+                connect=5.0, read=25.0, write=10.0, pool=5.0
+            )
+        self._client = OpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            timeout=timeout,
+            max_retries=max_retries,
+        )
 
     def chat(
         self,

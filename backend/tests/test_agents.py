@@ -187,7 +187,6 @@ def test_search_agent_uses_vector_search_when_available(db_session, monkeypatch)
 
     from app.agents.search import SearchAgent
     from app.core.config import settings
-    from app.memory.service import entry_text
 
     class _FakeLLM:
         available = True
@@ -226,7 +225,7 @@ def test_vector_search_ranks_relevant_entry_first(db_session, monkeypatch):
     from sqlalchemy import select
 
     from app.core.config import settings
-    from app.memory.service import MemoryService, cosine_similarity
+    from app.memory.service import MemoryService
 
     class _FakeLLM:
         available = True
@@ -263,7 +262,6 @@ def test_cosine_similarity_basic():
 
 def test_entry_text_joins_title_content_tags(db_session):
     from app.memory.service import entry_text
-
     from app.models import KnowledgeEntry
 
     entry = db_session.scalars(select(KnowledgeEntry)).first()

@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from sqlalchemy.orm import Session
+
 from app.llm.client import LLMClient
 from app.memory.service import MemoryService
 from app.models import Agent as AgentRecord
@@ -35,11 +37,13 @@ class BaseAgent:
         memory: MemoryService,
         tools: ToolRegistry,
         llm: LLMClient,
+        db: Session | None = None,
     ) -> None:
         self.record = record
         self.memory = memory
         self.tools = tools
         self.llm = llm
+        self.db = db
 
     # --- Identity (from the database row) ---------------------------------
 

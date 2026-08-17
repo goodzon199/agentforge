@@ -29,6 +29,7 @@ class CompanyRead(ORMModel):
     description: str
     is_active: bool
     agent_quota: int
+    public_token: str | None = None
     created_at: datetime
     updated_at: datetime
     agents_count: int = 0

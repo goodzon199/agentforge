@@ -1,19 +1,24 @@
 from __future__ import annotations
 
 import logging
+import time
+from datetime import UTC
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.registry import agent_registry
+from app.core.config import settings
+from app.core.emergency import emergency_switch
 from app.core.redis import redis_client
-from app.llm.client import LLMClient, llm_client
+from app.llm.client import LLMClient, TaskLLMProxy, llm_client
 from app.memory.service import MemoryService
 from app.models import Agent as AgentRecord
-from app.models import Task, TaskEvent
+from app.models import Task, TaskEvent, Trace
 from app.models.enums import TaskStatus
-from app.orchestrator.messages import ResultMessage, TaskMessage
+from app.orchestrator.messages import TaskMessage
+from app.reliability.errors import TRANSIENT, FailureKind, classify_exception
 from app.tools.registry import ToolRegistry, tool_registry
 
 logger = logging.getLogger(__name__)
@@ -87,6 +92,62 @@ class Orchestrator:
         task.started_at = _now()
         db.commit()
 
+        # Wrap the shared LLM client per task so token usage can be attributed
+        # to the executing agent (cost/task metric, sprint 3.2).
+        llm = TaskLLMProxy(self.llm)
+
+        # Distributed tracing (sprint 3.6): every task joins its trace. Tasks
+        # created from a customer message already carry a trace_id (set in
+        # ConversationService.add_message); ad-hoc API tasks get a fresh trace.
+        from app.tracing.tracer import (
+            bind_db,
+            maybe_finish_trace,
+            resolve_trace_for_conversation,
+            trace,
+            unbind_db,
+        )
+
+        task_span_parent: Any = None
+        if task.trace_id is None:
+            conversation_id = (task.input_data or {}).get("conversation_id")
+            task.trace_id = resolve_trace_for_conversation(
+                db,
+                _as_uuid(conversation_id),
+                company_id=task.company_id,
+                source="manual_task",
+            )
+            db.commit()
+            # resolve_trace_for_conversation opened a fresh trace: nest the
+            # task span under its root conversation span.
+            fresh = db.get(Trace, task.trace_id)
+            task_span_parent = fresh.root_span_id if fresh else None
+        else:
+            # The worker context has no active span stack (the trace was
+            # opened by the API request that created the task), so the task
+            # span must attach to the trace's root span explicitly.
+            existing = db.get(Trace, task.trace_id)
+            task_span_parent = existing.root_span_id if existing else None
+
+        db_token = bind_db(db)
+        try:
+            with trace(
+                db,
+                "task",
+                task.title,
+                trace_id=task.trace_id,
+                parent_span_id=task_span_parent,
+                task_id=task.id,
+                metadata={"objective": task.objective},
+            ):
+                return self._run_pipeline(db, task, llm)
+        finally:
+            unbind_db(db_token)
+            maybe_finish_trace(db, task.trace_id)
+            db.commit()
+
+    def _run_pipeline(self, db: Session, task: Task, llm: TaskLLMProxy) -> Task:
+        from app.tracing.tracer import trace
+
         try:
             agent_record = self._resolve_system_agent(db)
             if agent_record is None:
@@ -96,7 +157,8 @@ class Orchestrator:
                 record=agent_record,
                 memory=MemoryService(db),
                 tools=self.tools,
-                llm=self.llm,
+                llm=llm,
+                db=db,
             )
 
             self._add_event(
@@ -106,7 +168,15 @@ class Orchestrator:
                 message=f"Агент {system.name} получил задачу.",
             )
 
-            decision = system.execute(task.objective, task.input_data or {})
+            with trace(
+                db,
+                "agent",
+                f"{system.name} ({system.slug})",
+                task_id=task.id,
+                agent_id=agent_record.id,
+                metadata={"kind": getattr(system, "kind", system.slug)},
+            ):
+                decision = system.execute(task.objective, task.input_data or {})
             system.remember(
                 f"Задача: {task.objective} -> маршрут: {decision.routing_decision}",
                 kind="routing",
@@ -131,9 +201,18 @@ class Orchestrator:
                     record=target_record,
                     memory=MemoryService(db),
                     tools=self.tools,
-                    llm=self.llm,
+                    llm=llm,
+                    db=db,
                 )
-                output = target.execute(task.objective, task.input_data or {})
+                with trace(
+                    db,
+                    "agent",
+                    f"{target_record.name} ({getattr(target, 'kind', target.slug)})",
+                    task_id=task.id,
+                    agent_id=target_record.id,
+                    metadata={"kind": getattr(target, "kind", target.slug)},
+                ):
+                    output = target.execute(task.objective, task.input_data or {})
                 target.remember(
                     f"Задача: {task.objective} -> {output.response}",
                     kind="task_result",
@@ -154,7 +233,10 @@ class Orchestrator:
             }
             task.routing_decision = output.routing_decision
             task.status = TaskStatus.completed
+            task.error = None
             task.completed_at = _now()
+            # Attribute the task to the agent that actually executed it.
+            task.agent_id = final_agent.id
 
             self._add_event(
                 db,
@@ -162,12 +244,59 @@ class Orchestrator:
                 source="orchestrator",
                 message=f"Задача завершена. {output.response}",
             )
+            llm.flush(
+                db,
+                task_id=task.id,
+                company_id=task.company_id,
+                agent_id=final_agent.id,
+            )
             self._update_statistics(db, final_agent, success=True)
             db.commit()
             return task
 
         except Exception as exc:  # pragma: no cover - defensive
             logger.exception("Task %s failed", task.id)
+            kind = classify_exception(exc)
+            llm.flush(db, task_id=task.id, company_id=task.company_id)
+
+            # Transient failures requeue (bounded); everything else goes to
+            # the dead-letter queue. Business errors are never retried.
+            if kind in TRANSIENT and task.retries < settings.task_max_retries:
+                task.retries += 1
+                task.status = TaskStatus.queued
+                task.started_at = None
+                task.completed_at = None
+                task.error = (
+                    f"retry {task.retries}/{settings.task_max_retries} "
+                    f"({kind.value}): {exc}"
+                )
+                self._add_event(
+                    db,
+                    task,
+                    source="orchestrator",
+                    level="warning",
+                    message=(
+                        f"Транзиентная ошибка ({kind.value}), повтор "
+                        f"{task.retries}/{settings.task_max_retries}: {exc}"
+                    ),
+                    meta={"kind": kind.value, "attempt": task.retries},
+                )
+                db.commit()
+                if redis_client.available:
+                    redis_client.push(
+                        settings.task_queue_name,
+                        TaskMessage(
+                            task_id=task.id,
+                            company_id=task.company_id,
+                            objective=task.objective,
+                            input_data=task.input_data or {},
+                            priority=task.priority.value,
+                        ).to_dict(),
+                    )
+                else:
+                    self.process(db, task)  # inline re-run (Redis fallback)
+                return task
+
             task.status = TaskStatus.failed
             task.error = str(exc)
             task.completed_at = _now()
@@ -176,8 +305,10 @@ class Orchestrator:
                 task,
                 source="orchestrator",
                 level="error",
-                message=f"Ошибка выполнения: {exc}",
+                message=f"Ошибка выполнения ({kind.value}): {exc}",
+                meta={"kind": kind.value},
             )
+            self._dead_letter(db, task, kind)
             db.commit()
             return task
 
@@ -187,6 +318,12 @@ class Orchestrator:
         """Consume a single queued message (blocking up to 1s)."""
         raw = redis_client.pop("agentos:tasks")
         if raw is None:
+            return
+        if emergency_switch.is_engaged():
+            # Global pause: leave the message in the queue untouched and idle.
+            # The task is processed later when the switch is released.
+            redis_client.push_raw("agentos:tasks", raw)
+            time.sleep(1.0)
             return
         message = TaskMessage.from_dict(raw)
         task = db.get(Task, message.task_id)
@@ -224,6 +361,40 @@ class Orchestrator:
             )
         )
 
+    def _dead_letter(
+        self, db: Session, task: Task, kind: FailureKind
+    ) -> None:
+        """Move a failed task to the dead-letter queue.
+
+        Postgres (``dead_tasks``) is the source of truth; the Redis
+        ``agentos:tasks:dead`` list is only a fast signal for operators.
+        """
+        from app.models import DeadTask
+
+        attempts = task.retries + 1
+        db.add(
+            DeadTask(
+                task_id=task.id,
+                company_id=task.company_id,
+                agent_id=task.agent_id,
+                objective=task.objective,
+                payload=task.input_data or {},
+                exception_kind=kind.value,
+                error=task.error,
+                attempts=attempts,
+                dead_at=_now(),
+            )
+        )
+        redis_client.push(
+            settings.dlq_queue_name,
+            {
+                "task_id": str(task.id),
+                "exception_kind": kind.value,
+                "attempts": attempts,
+                "dead_at": _now().isoformat(),
+            },
+        )
+
     def _update_statistics(self, db: Session, agent: AgentRecord, *, success: bool) -> None:
         agent.tasks_total += 1
         if success:
@@ -234,12 +405,40 @@ class Orchestrator:
             (agent.tasks_completed / agent.tasks_total) * 100 if agent.tasks_total else 0.0,
             2,
         )
+        # total_llm_calls is derived from LLMUsage (the single source of truth),
+        # not incremented by hand. Setting (not +=) keeps a re-processed task
+        # from inflating the counter.
+        from sqlalchemy import func
+
+        from app.models import LLMUsage
+
+        db.flush()  # make the just-flushed usage rows visible to the count
+        count = db.scalar(
+            select(func.count())
+            .select_from(LLMUsage)
+            .where(LLMUsage.agent_id == agent.id)
+        )
+        agent.total_llm_calls = int(count or 0)
 
 
 def _now():
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
+
+
+def _as_uuid(value: Any) -> Any:
+    """Coerce a string UUID to uuid.UUID (tolerates None/invalid)."""
+    import uuid
+
+    if value is None:
+        return None
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, TypeError):
+        return None
 
 
 orchestrator = Orchestrator()

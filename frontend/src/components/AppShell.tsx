@@ -10,15 +10,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
 
   const isLogin = pathname === "/login";
+  const isPublic = pathname.startsWith("/webchat");
+  const isBare = isLogin || isPublic || pathname.startsWith("/change-password");
   const authed = getToken();
 
   useEffect(() => {
-    if (!isLogin && !authed) {
+    if (!isBare && !authed) {
       router.replace("/login");
     }
-  }, [isLogin, authed, router]);
+  }, [isBare, authed, router]);
 
-  if (isLogin) {
+  if (isBare) {
     return <div className="h-full">{children}</div>;
   }
 

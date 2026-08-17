@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -15,7 +15,7 @@ class TaskMessage:
     objective: str
     input_data: dict[str, Any] = field(default_factory=dict)
     priority: str = "normal"
-    submitted_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    submitted_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -28,7 +28,7 @@ class TaskMessage:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "TaskMessage":
+    def from_dict(cls, data: dict[str, Any]) -> TaskMessage:
         return cls(
             task_id=UUID(data["task_id"]),
             company_id=UUID(data["company_id"]),

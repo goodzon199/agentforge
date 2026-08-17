@@ -28,9 +28,12 @@ def test_orchestrator_processes_task(db_session):
     assert any("передал задачу агенту SearchAgent" in m for m in messages)
 
 
-def test_orchestrator_handoff_email_and_completes(db_session):
-    """Email task: SystemAgent hands off to EmailAgent; SMTP is off in tests,
-    so the task still completes with a clear error instead of crashing."""
+def test_orchestrator_email_smtp_off_goes_to_dead_letter(db_session):
+    """SMTP off (tests): the email task FAILS and lands in the dead-letter
+    queue with a normalized kind — ready for Replay after recovery (sprint 3.5).
+    """
+    from app.models import DeadTask
+
     company = db_session.scalars(select(Company)).first()
     service = TaskService(db_session)
     task = service.create(
@@ -43,10 +46,15 @@ def test_orchestrator_handoff_email_and_completes(db_session):
     orchestrator.process(db_session, task)
     db_session.refresh(task)
 
-    assert task.status.value == "completed"
-    assert "error" in task.output_data["data"]
+    assert task.status.value == "failed"
     messages = [e.message for e in task.events]
     assert any("передал задачу агенту EmailAgent" in m for m in messages)
+    dead = db_session.scalars(
+        select(DeadTask).where(DeadTask.task_id == task.id)
+    ).first()
+    assert dead is not None
+    assert dead.exception_kind == "internal_error"  # SMTP not configured
+    assert dead.attempts == 1
 
 
 def test_orchestrator_routes_to_system_without_handoff(db_session):
@@ -81,6 +89,7 @@ def test_orchestrator_updates_email_agent_statistics(db_session):
     email_agent = db_session.scalars(
         select(Agent).where(Agent.slug == "email-agent")
     ).first()
-    assert email_agent.tasks_total == 1
-    assert email_agent.tasks_completed == 1
-    assert email_agent.avg_success_rate == 100.0
+    # SMTP is off in tests, so the email task fails (no statistics bump) and
+    # the failure is surfaced on the task itself for retry / dead-letter.
+    assert email_agent.tasks_total == 0
+    assert task.status.value == "failed"

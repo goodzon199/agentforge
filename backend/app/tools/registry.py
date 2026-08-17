@@ -29,6 +29,17 @@ class ToolRegistry:
         tool = self.get(name)
         if tool is None:
             return ToolResult(ok=False, error=f"Unknown tool: {name}")
+        from app.tracing.tracer import current_db, trace
+
+        db = current_db()
+        if db is not None:
+            with trace(
+                db,
+                "tool",
+                f"tool.{name}",
+                metadata={"kwargs_keys": sorted(kwargs.keys())},
+            ):
+                return tool.run(**kwargs)
         return tool.run(**kwargs)
 
     def list(self) -> list[dict[str, Any]]:

@@ -4,12 +4,26 @@ from typing import Any
 
 from app.agents.base import AgentOutput, BaseAgent
 from app.core.config import settings
+from app.reliability.errors import FailureKind
+
+
+class EmailDeliveryError(RuntimeError):
+    """SMTP send failed. Carries a normalized ``kind`` so the orchestrator can
+    decide retry (transient) vs dead-letter (definitive)."""
+
+    def __init__(self, message: str, *, kind: FailureKind) -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
 class EmailAgent(BaseAgent):
     """
     Sends e-mail on behalf of the platform. Receives a task handed off
     by SystemAgent and turns it into an SMTP message via the email tool.
+
+    A failed send fails the task (with a normalized failure kind), so the
+    orchestrator can retry transient SMTP outages and dead-letter definitive
+    ones — nothing is silently lost (sprint 3.5).
     """
 
     kind = "email"
@@ -25,11 +39,14 @@ class EmailAgent(BaseAgent):
         result = self.tools.run("email", to=to, subject=subject, body=body)
 
         if not result.ok:
-            return AgentOutput(
-                response=f"Не удалось отправить письмо: {result.error}",
-                data={"error": result.error, "to": to},
-                routing_decision={"needs_agent": None, "reason": result.error, "engine": "email"},
-                handoff_agent=None,
+            kind = FailureKind.INTERNAL_ERROR
+            if isinstance(result.data, dict):
+                try:
+                    kind = FailureKind(result.data.get("kind") or "internal_error")
+                except ValueError:
+                    kind = FailureKind.INTERNAL_ERROR
+            raise EmailDeliveryError(
+                f"Не удалось отправить письмо: {result.error}", kind=kind
             )
 
         sent = result.data

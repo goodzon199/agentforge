@@ -41,6 +41,9 @@ export function StatusBadge({ status }: { status: string }) {
     active: "bg-emerald-500/15 text-emerald-400",
     disabled: "bg-slate-500/15 text-slate-400",
     paused: "bg-amber-500/15 text-amber-400",
+    new: "bg-blue-500/15 text-blue-400",
+    confirmed: "bg-emerald-500/15 text-emerald-400",
+    paid: "bg-violet-500/15 text-violet-400",
   };
   return <span className={`badge ${map[status] ?? "bg-slate-500/15 text-slate-300"}`}>{status}</span>;
 }
