@@ -32,9 +32,6 @@ class Customer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     conversations: Mapped[list[Conversation]] = relationship(
         "Conversation", back_populates="customer", cascade="all, delete-orphan"
     )
-    vehicles: Mapped[list[Vehicle]] = relationship(
-        "Vehicle", back_populates="customer", cascade="all, delete-orphan"
-    )
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Customer {self.name!r}>"

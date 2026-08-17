@@ -11,6 +11,7 @@ import os
 from typing import Any
 
 import httpx
+from fastapi import HTTPException, Request, status
 
 _INTERNAL_TOKEN_ENV = "INTERNAL_API_TOKEN"
 _DEFAULT_TOKEN = "dev-internal-token-change-me"
@@ -59,15 +60,12 @@ def is_internal_request(headers: Any, token: str | None = None) -> bool:
     return bool(expected) and provided == expected
 
 
-def require_internal_token(request: Any) -> None:
+def require_internal_token(request: Request) -> None:
     """FastAPI dependency guarding /internal/* routes.
 
-    Rejects requests without the shared internal token. Imported lazily so the
-    package stays importable in environments without FastAPI.
+    Rejects requests without the shared internal token.
     """
-    from fastapi import HTTPException, status
-
-    if not is_internal_request(getattr(request, "headers", {})):
+    if not is_internal_request(request.headers):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Неверный внутренний токен.",
