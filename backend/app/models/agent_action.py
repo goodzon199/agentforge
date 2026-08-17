@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -52,8 +52,9 @@ class AgentAction(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     requires_approval: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     # Double-click protection: an executed action with the same key must not
-    # run again (e.g. send_quote:{quote_id}:{conversation_id}).
-    idempotency_key: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
+    # run again (e.g. send_quote:{quote_id}:{conversation_id}). UNIQUE so two
+    # workers can never both deliver the same quote version (sprint 3.8.3a).
+    idempotency_key: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
 
     executed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

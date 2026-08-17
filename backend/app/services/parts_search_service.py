@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -23,10 +23,10 @@ from app.models.enums import (
     SupplierAttemptStatus,
     SupplierSearchStatus,
 )
+from app.services.supplier_service import SupplierService
 from app.suppliers.base import NormalizedSupplierOffer, SupplierSearchQuery
 from app.suppliers.errors import SupplierQueryNotSupported
 from app.suppliers.normalize import normalize_article
-from app.services.supplier_service import SupplierService
 
 _NEXT_ACTION = "pricing_parts"
 
@@ -44,7 +44,7 @@ _BREAKER_BY_ADAPTER = {
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class PartsSearchService:
@@ -70,7 +70,7 @@ class PartsSearchService:
         triggered_by: str = "agent",
         task_id: uuid.UUID | None = None,
     ) -> dict[str, Any]:
-        from app.tracing.tracer import record_span, trace
+        from app.tracing.tracer import trace
 
         with trace(
             self.db,
@@ -226,6 +226,7 @@ class PartsSearchService:
             select(SupplierOffer)
             .where(SupplierOffer.part_request_id == part_request_id)
             .order_by(
+                SupplierOffer.rank.asc().nulls_last(),
                 SupplierOffer.purchase_price.asc().nulls_last(),
                 SupplierOffer.created_at.asc(),
             )
@@ -316,7 +317,7 @@ class PartsSearchService:
     ) -> list[tuple[SupplierSearchAttempt, list[NormalizedSupplierOffer], Any, int]]:
         tasks = [
             self._call_adapter(supplier, attempt, query)
-            for supplier, attempt in zip(suppliers, attempts)
+            for supplier, attempt in zip(suppliers, attempts, strict=False)
         ]
         return await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -350,7 +351,7 @@ class PartsSearchService:
         except SupplierQueryNotSupported:
             latency = int((time.monotonic() - started) * 1000)
             return attempt, [], _SKIPPED_MARKER, latency
-        except Exception as exc:  # noqa: BLE001 - one supplier must not break the run
+        except Exception as exc:
             latency = int((time.monotonic() - started) * 1000)
             return attempt, [], str(exc)[:1000], latency
 

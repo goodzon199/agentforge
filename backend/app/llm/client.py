@@ -244,7 +244,7 @@ class LLMClient:
                     max_tokens=max_tokens,
                 )
                 kind = classify_response(response)
-            except Exception as exc:  # noqa: BLE001 - classify every failure
+            except Exception as exc:
                 kind = classify_exception(exc)
                 response = None
                 with self._lock:

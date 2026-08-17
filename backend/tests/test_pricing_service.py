@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import select
 
-from app.models import Company, SupplierOffer
+from app.models import Company
 from app.services.parts_search_service import PartsSearchService
 from app.services.pricing_service import PricingService
 from app.suppliers.base import NormalizedSupplierOffer, SupplierAdapter, SupplierSearchQuery

@@ -56,7 +56,7 @@ def update_policies(
             raise HTTPException(
                 status_code=422,
                 detail=f"Недопустимый уровень риска «{level}» для «{key}».",
-            )
+            ) from None
     settings = dict(company.settings or {})
     settings["permissions"] = normalized
     company.settings = settings

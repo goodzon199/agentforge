@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select
@@ -31,7 +31,7 @@ class TaskService:
         from app.core.config import settings
 
         limit = max_seconds if max_seconds is not None else settings.task_max_running_seconds
-        threshold = (now or datetime.now(timezone.utc)) - timedelta(seconds=limit)
+        threshold = (now or datetime.now(UTC)) - timedelta(seconds=limit)
 
         stmt = (
             select(Task)
@@ -49,7 +49,7 @@ class TaskService:
                 continue
             task.status = TaskStatus.failed
             task.error = f"task_timeout: превышен лимит {limit:.0f}с на выполнение"
-            task.completed_at = datetime.now(timezone.utc)
+            task.completed_at = datetime.now(UTC)
             self.db.add(
                 TaskEvent(
                     task_id=task.id,

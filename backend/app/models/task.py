@@ -62,9 +62,9 @@ class Task(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    company: Mapped["Company"] = relationship("Company", back_populates="tasks")
-    agent: Mapped["Agent | None"] = relationship("Agent")
-    events: Mapped[list["TaskEvent"]] = relationship(
+    company: Mapped[Company] = relationship("Company", back_populates="tasks")
+    agent: Mapped[Agent | None] = relationship("Agent")
+    events: Mapped[list[TaskEvent]] = relationship(
         "TaskEvent", back_populates="task", cascade="all, delete-orphan", lazy="selectin"
     )
 

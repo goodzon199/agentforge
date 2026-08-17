@@ -31,7 +31,9 @@ def extract_query(objective: str, input_data: dict[str, Any]) -> str:
     lowered = text.lower()
     for prefix in _VERB_PREFIXES:
         if lowered.startswith(prefix):
-            rest = text[len(prefix):].lstrip(": ,.!-— «»\"'").strip()
+            # Strip the leading punctuation/whitespace set (intentional, not a
+            # substring): e.g. "Найди: ..." -> "найди ..."
+            rest = text[len(prefix) :].lstrip(": ,.!-— «»\"'").strip()  # noqa: B005
             if rest:
                 return rest
     return text

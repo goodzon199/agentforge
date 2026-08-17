@@ -142,7 +142,15 @@ export type User = {
   is_active: boolean;
   is_superuser: boolean;
   company_id: string | null;
+  must_change_password: boolean;
+  role?: string;
   created_at: string;
+};
+
+export type EmergencyStatus = {
+  engaged: boolean;
+  reason: string | null;
+  engaged_at: string | null;
 };
 
 export type AuditEvent = {
@@ -154,6 +162,8 @@ export type AuditEvent = {
   entity_type: string;
   entity_id: string | null;
   ip_address: string | null;
+  request_id: string | null;
+  user_agent: string | null;
   detail: Record<string, unknown>;
   created_at: string;
 };
@@ -161,6 +171,7 @@ export type AuditEvent = {
 export type AuditList = {
   total: number;
   items: AuditEvent[];
+  next_cursor: string | null;
 };
 
 export type LoginResponse = {
@@ -178,6 +189,53 @@ export type Customer = {
   source: string;
   external_id: string;
   created_at: string;
+};
+
+export type GarageVehicle = {
+  id: string;
+  vin: string;
+  brand: string;
+  model: string;
+  year: number | null;
+  engine: string;
+  body: string;
+  registration_number: string;
+};
+
+export type GaragePurchase = {
+  order_id: string;
+  order_number: string;
+  status: string;
+  created_at: string;
+  part_name: string;
+  article: string;
+  brand: string;
+  total_price: string | null;
+  quantity: number | null;
+};
+
+export type CustomerGarage = {
+  customer_id: string;
+  memory: {
+    segment: string;
+    avg_check: number | null;
+    preferences: Record<string, unknown>;
+    updated_at?: string | null;
+    avg_check_updated_at?: string | null;
+  };
+  vehicles: {
+    vehicle: GarageVehicle;
+    history: GaragePurchase[];
+  }[];
+};
+
+export type CustomerMemory = {
+  customer_id: string;
+  segment: string;
+  avg_check: number | null;
+  preferences: Record<string, unknown>;
+  updated_at?: string | null;
+  avg_check_updated_at?: string | null;
 };
 
 export type ConversationMode = "ai_active" | "human_active" | "paused" | "closed";
@@ -257,6 +315,7 @@ export type Supplier = {
   slug: string;
   adapter_type: string;
   is_active: boolean;
+  is_experimental: boolean;
   settings: Record<string, unknown>;
   created_at: string;
   updated_at: string;
@@ -277,6 +336,9 @@ export type SupplierOffer = {
   customer_price: string | null;
   total_price: string | null;
   margin_percent: string | null;
+  rank: number | null;
+  rank_score: string | null;
+  rank_reasons: string[] | null;
   created_at: string;
 };
 
@@ -328,7 +390,7 @@ export type PartQuote = {
 };
 
 export type QuoteItem = {
-  offer_id: string;
+  offer_id?: string;
   brand: string;
   article: string;
   part_name: string;
@@ -384,6 +446,8 @@ export type QuoteSendResult = {
   message_sent: boolean;
   already_executed: boolean;
   quote_id: string | null;
+  auto_sent?: boolean;
+  auto_reasons?: string[] | null;
 };
 
 export type Order = {
@@ -395,12 +459,58 @@ export type Order = {
   quote_id: string | null;
   order_number: string;
   status: string;
+  tracking_status: string;
   currency: string;
   order_total: string | null;
   items: QuoteItem[];
   created_by_user_id: string | null;
   confirmed_at: string | null;
   created_at: string;
+};
+
+export type SupplierTrackingSupplier = {
+  supplier_id: string;
+  supplier_name: string;
+  external_order_id: string | null;
+  supplier_status: string | null;
+};
+
+export type SupplierTracking = {
+  order_id: string;
+  order_number: string;
+  order_status: string;
+  tracking_status: string;
+  suppliers: SupplierTrackingSupplier[];
+  notification: Record<string, unknown> | null;
+};
+
+export type SupplierPurchase = {
+  approval_id: string;
+  order_id: string | null;
+  order_number: string | null;
+  supplier_id: string | null;
+  supplier_name: string;
+  action_type: string;
+  status: string;
+  risk_level: string;
+  external_order_id: string | null;
+  supplier_status: string | null;
+  order_status: string | null;
+  tracking_status: string | null;
+  items: Record<string, unknown>[];
+  order_total: string | null;
+  created_at: string;
+  approved_at: string | null;
+  rejected_at: string | null;
+  rejection_reason: string | null;
+  expires_at: string | null;
+};
+
+export type SupplierHandOverResult = {
+  order_id: string;
+  order_number: string;
+  tracking_status: string;
+  already_handed_over: boolean;
 };
 
 export type QuoteAcceptResult = {
@@ -456,10 +566,42 @@ export type PilotAnalytics = {
   revenue: string;
   gross_profit: string;
   avg_response_seconds: number | null;
+  p95_response_seconds?: number | null;
   pipeline: PipelineStageStats[];
   suppliers: SupplierStats;
   llm: LlmStats;
   task_timeouts: number;
+  assist?: AssistStats | null;
+  sprint39?: Sprint39Report | null;
+};
+
+export type Sprint39Report = {
+  target_requests: number;
+  real_requests: number;
+  remaining_to_target: number;
+  intake_accuracy: number | null;
+  search_success: number | null;
+  correct_fitment: number | null;
+  quotes_generated: number | null;
+  quote_guard_pass: number | null;
+  manager_unchanged_send: number | null;
+  manager_edited: number | null;
+  manager_rejected: number | null;
+  manager_sends_total: number;
+  controlled_auto_eligible: number | null;
+  controlled_auto_sent: number | null;
+  auto_send_error_rate: number | null;
+  avg_response_seconds: number | null;
+  p95_response_seconds: number | null;
+  quote_to_accepted: number | null;
+  accepted_to_order: number | null;
+  revenue: string;
+  gross_profit: string;
+  llm_cost_per_request: string;
+  infra_cost_per_request: string;
+  total_cost_per_request: string;
+  human_takeover: number | null;
+  full_automation: number | null;
 };
 
 export type FeedbackRates = {
@@ -521,4 +663,186 @@ export type CompanyPolicies = {
   sales: Record<string, unknown>;
   security: Record<string, unknown>;
   defaults: Record<string, Record<string, unknown>>;
+};
+
+export type AttentionCounts = {
+  client_waiting_reply: number;
+  approval_pending: number;
+  ai_unsure: number;
+  supplier_error: number;
+};
+
+export type TodayCounts = {
+  requests: number;
+  selections: number;
+  quotes: number;
+  sent: number;
+  orders: number;
+};
+
+export type QueueItem = {
+  type: string;
+  action: string;
+  title: string;
+  customer: string;
+  part: string;
+  vehicle: string;
+  conversation_id: string | null;
+  quote_id?: string | null;
+  approval_id?: string | null;
+  part_request_id?: string | null;
+  created_at: string;
+};
+
+export type ShadowStats = {
+  total: number;
+  completed: number;
+  pending: number;
+  limit: number;
+  vehicle_match_pct: number | null;
+  part_match_pct: number | null;
+  oem_match_pct: number | null;
+  avg_time_seconds: number | null;
+  shadow_mode?: boolean;
+};
+
+export type ShadowComparison = {
+  id: string;
+  part_request_id: string;
+  conversation_id: string;
+  status: string;
+  ai: {
+    vehicle: string;
+    part: string;
+    article: string;
+    offer_ids: string[];
+    price: string | null;
+    answer: string;
+  };
+  manager: {
+    vehicle: string;
+    part: string;
+    article: string;
+    offer_ids: string[];
+    price: string | null;
+    reply: string;
+  };
+  result: {
+    vehicle_match: boolean | null;
+    part_match: boolean | null;
+    oem_match: boolean | null;
+    offer_overlap: number;
+    price_delta: string | null;
+    time_seconds: number | null;
+  };
+  evaluated_at: string | null;
+  created_at: string;
+};
+
+export type ShadowList = {
+  items: ShadowComparison[];
+  stats: ShadowStats;
+  shadow_mode: boolean;
+};
+
+export type ManagerDashboard = {
+  attention: AttentionCounts;
+  today: TodayCounts;
+  queue: QueueItem[];
+  shadow: ShadowStats;
+  assist: AssistStats;
+};
+
+export type AssistStats = {
+  sends_total: number;
+  sends_unchanged: number;
+  sends_edited: number;
+  sends_rejected: number;
+  manager_edit_rate: number | null;
+  auto_sends?: number;
+};
+
+export type FitmentSource = {
+  source: string;
+  weight: number;
+  score: number;
+  detail: string;
+};
+
+export type FitmentExplain = {
+  level: "high" | "medium" | "low";
+  confidence: number;
+  vehicle_dependent: boolean;
+  verdict: string;
+  sources: FitmentSource[];
+  vin: {
+    vin: string;
+    valid: boolean;
+    brand: string;
+    year: number | null;
+    reason: string;
+  };
+  computed_at: string;
+  engine_version: string;
+  checks: string[];
+  warnings: string[];
+};
+
+export type VerifyRequest = {
+  article: string;
+  brand: string;
+  result: "confirmed" | "rejected";
+};
+
+export type SupplierReliability = {
+  supplier_id: string;
+  supplier_name: string;
+  rating: number;
+  rating_source: string;
+  rating_version: string;
+  computed_at: string;
+
+  orders_total: number;
+  confirmed: number;
+  cancelled: number;
+  confirmation_rate: number | null;
+  cancellation_rate: number | null;
+
+  fulfillments_total: number;
+  fulfillments_recorded: number;
+  on_time_delivery: number | null;
+  price_change_rate: number | null;
+  under_delivery_rate: number | null;
+
+  returns_total: number;
+  return_rate: number | null;
+
+  attempts_total: number;
+  attempts_failed: number;
+  api_availability: number | null;
+  api_avg_latency_ms: number | null;
+  api_p95_latency_ms: number | null;
+
+  reliability_score: number;
+  api_score: number;
+};
+
+export type SupplierFulfillment = {
+  id: string;
+  company_id: string;
+  supplier_id: string;
+  order_id: string | null;
+  offer_id: string | null;
+  article: string;
+  brand: string;
+  promised_purchase_price: string | null;
+  promised_delivery_days: number | null;
+  quantity_ordered: number | null;
+  actual_purchase_price: string | null;
+  actual_delivery_days: number | null;
+  quantity_delivered: number | null;
+  status: string;
+  delivered_at: string | null;
+  created_at: string;
+  updated_at: string;
 };

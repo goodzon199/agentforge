@@ -1,7 +1,7 @@
 """conversations domain: customers, conversations, messages
 
 Revision ID: f4e7291ad0aa
-Revises:
+Revises: a0b1c2d3e4f0
 Create Date: 2026-08-06 13:54:56.885313
 """
 from typing import Sequence, Union
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 revision: str = "f4e7291ad0aa"
-down_revision: Union[str, None] = None
+down_revision: Union[str, None] = "a0b1c2d3e4f0"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -2,18 +2,18 @@ from __future__ import annotations
 
 import time
 import uuid
+from datetime import UTC
 
 import httpx
 import pytest
 from sqlalchemy import select
 
-from app.models import Agent, Company, DeadTask, Task
+from app.models import Company, DeadTask, Task
 from app.orchestrator.orchestrator import orchestrator
 from app.reliability.circuit_breaker import BreakerState, CircuitBreaker, get_breaker
 from app.reliability.errors import FailureKind, classify_exception
 from app.reliability.retry import RetryPolicy
 from app.services.task_service import TaskService
-
 
 # --- RetryPolicy -------------------------------------------------------------
 
@@ -126,7 +126,7 @@ def test_breaker_success_streak_resets_failures():
 
 
 def test_breaker_snapshot_opened_at_is_wall_clock():
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     breaker = CircuitBreaker("t", failure_threshold=1, recovery_timeout=1.0)
     breaker.record_failure()
@@ -134,7 +134,7 @@ def test_breaker_snapshot_opened_at_is_wall_clock():
     assert snap["opened_at"] is not None
     # monotonic() would give an epoch near boot (1970) — wall clock is "now".
     opened = datetime.fromisoformat(snap["opened_at"])
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     assert abs((now - opened).total_seconds()) < 30
 
 
@@ -163,7 +163,6 @@ def _redis_breaker(name, **kwargs):
 
 
 def test_redis_breaker_transitions_atomically():
-    from app.reliability.circuit_breaker import RedisCircuitBreaker, get_breaker
 
     name = f"test-rd-{uuid.uuid4().hex[:8]}"
     b = _redis_breaker(name, failure_threshold=3, recovery_timeout=1.0)
@@ -251,7 +250,6 @@ def test_redis_breaker_half_open_probe_lock_is_exclusive():
 
 def test_redis_breaker_falls_back_to_local_when_redis_down(monkeypatch):
     from app.core import redis as redis_module
-    from app.reliability.circuit_breaker import RedisCircuitBreaker
 
     name = f"test-rd-fallback-{uuid.uuid4().hex[:8]}"
     b = _redis_breaker(name, failure_threshold=2, recovery_timeout=1.0)
@@ -317,8 +315,8 @@ def test_classify_exception_respects_explicit_kind():
 
 
 def test_from_llm_and_supplier_kinds():
-    from app.reliability.errors import from_llm_kind, from_llm_status, from_supplier_kind
     from app.llm.errors import LLMErrorKind
+    from app.reliability.errors import from_llm_kind, from_llm_status, from_supplier_kind
 
     assert from_llm_kind(LLMErrorKind.TIMEOUT) is FailureKind.TIMEOUT
     assert from_llm_kind(LLMErrorKind.ERROR) is FailureKind.INTERNAL_ERROR
@@ -426,9 +424,9 @@ class _TransientFailingSystem:
 
 
 def test_transient_task_retries_then_dead_letters(db_session, monkeypatch):
+    from app.agents import registry as agents_registry
     from app.core.config import settings
     from app.core.redis import redis_client
-    from app.agents import registry as agents_registry
 
     monkeypatch.setitem(agents_registry._AGENT_CLASSES, "system", _TransientFailingSystem)
     monkeypatch.setattr(settings, "task_max_retries", 2)

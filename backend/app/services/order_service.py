@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -15,7 +15,6 @@ from app.services.audit_service import AuditService
 from app.services.sales_service import (
     ConflictError,
     ForbiddenError,
-    NotFoundError,
     company_allowed,
 )
 
@@ -34,7 +33,7 @@ _NEGATE_RE = re.compile(
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class OrderService:
@@ -69,7 +68,7 @@ class OrderService:
         )
         try:
             result = self._accept(quote, user, agent_id=agent_id, task_id=task_id)
-        except Exception as exc:  # noqa: BLE001 - record failure span
+        except Exception as exc:
             if trace_id is not None:
                 record_span(
                     self.db,
@@ -186,7 +185,7 @@ class OrderService:
             result = self._create_from_quote(
                 quote, user, agent_id=agent_id, task_id=task_id
             )
-        except Exception as exc:  # noqa: BLE001 - record failure span
+        except Exception as exc:
             if trace_id is not None:
                 record_span(
                     self.db,
@@ -266,9 +265,25 @@ class OrderService:
             created_by_user_id=user.id,
         )
         self.db.add(order)
+        self.db.flush()
+
+        # Fitment Engine (sprint 4.0): a confirmed order is the strongest
+        # positive evidence that this article fits this vehicle — the engine
+        # must never re-learn it from scratch on the next identical request.
+        from app.services.fitment_service import FitmentService
+
+        FitmentService(self.db).record_order_evidence(part_request, order)
+
+        # Supplier Intelligence (sprint 4.2): snapshot what each supplier
+        # promised on every order line, then refresh the live rating.
+        from app.services.supplier_reliability_service import (
+            SupplierReliabilityService,
+        )
+
+        SupplierReliabilityService(self.db).record_fulfillments_for_order(order)
 
         quote.status = QuoteStatus.converted_to_order
-        action = self._record_action(
+        self._record_action(
             company_id=quote.company_id,
             action_type="create_order",
             agent_id=agent_id,
@@ -314,6 +329,15 @@ class OrderService:
                 "currency": order.currency,
             },
         )
+
+        # Supplier Order Automation (Sprint 4.5): the moment an order exists the
+        # agent may *ask* to buy the parts, but the purchase stays HIGH-risk —
+        # an ApprovalRequest is raised per supplier and the external order is
+        # only placed after a manager approves it.
+        from app.services.supplier_order_service import SupplierOrderService
+
+        SupplierOrderService(self.db).request_purchase(order, agent_id=agent_id)
+
         self.db.commit()
         return {
             "order_id": str(order.id),

@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import os
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import jwt
 
@@ -15,12 +15,19 @@ _PBKDF2_ITERATIONS = 100_000
 _DEFAULT_JWT_SECRET = "dev-only-agentforge-jwt-secret-change-me-9f3a1c"
 _DEFAULT_ADMIN_PASSWORD = "admin123"
 
+# Well-known / placeholder passwords that must never be accepted, in any
+# environment, when set as the bootstrap admin password.
+_FORBIDDEN_ADMIN_PASSWORDS = frozenset(
+    {"admin123", "password", "12345678", "changeme", "change-me-please"}
+)
+
 
 def validate_production_settings() -> None:
     """Fail fast on insecure configuration in production.
 
     Development keeps permissive defaults; production refuses to start with
-    the well-known dev secret, a non-Postgres database or debug mode on.
+    the well-known dev secret, a non-Postgres database, debug mode on, schema
+    auto-creation enabled, or a missing / well-known bootstrap admin password.
     """
     if settings.environment != "production":
         return
@@ -39,6 +46,32 @@ def validate_production_settings() -> None:
         raise RuntimeError(
             "Production startup blocked: DB_AUTO_CREATE must be False "
             "(schema is managed by Alembic only)."
+        )
+    if not settings.seed_admin_password:
+        raise RuntimeError(
+            "Production startup blocked: SEED_ADMIN_PASSWORD is required "
+            "for the bootstrap admin account."
+        )
+    if settings.seed_admin_password in _FORBIDDEN_ADMIN_PASSWORDS:
+        raise RuntimeError(
+            "Production startup blocked: SEED_ADMIN_PASSWORD is a well-known "
+            "value and must be replaced with a strong password."
+        )
+    if len(settings.seed_admin_password) < settings.min_password_length:
+        raise RuntimeError(
+            "Production startup blocked: SEED_ADMIN_PASSWORD must be at least "
+            f"{settings.min_password_length} characters."
+        )
+    origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+    if not origins or "*" in origins:
+        raise RuntimeError(
+            "Production startup blocked: CORS_ORIGINS must be an explicit "
+            "list of allowed origins (a bare wildcard is refused)."
+        )
+    if not settings.openai_api_key:
+        raise RuntimeError(
+            "Production startup blocked: OPENAI_API_KEY is required "
+            "(set it even for a local model endpoint)."
         )
 
 
@@ -77,7 +110,7 @@ def verify_password(password: str, hashed: str) -> bool:
 
 def create_access_token(subject: str) -> str:
     """Issue a signed JWT for a user id."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": subject,
         "iss": settings.jwt_issuer,

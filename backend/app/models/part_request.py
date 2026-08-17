@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import JSON, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Enum, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -49,8 +49,8 @@ class PartRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     missing_fields: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     structured_data: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
-    vehicle: Mapped["Vehicle | None"] = relationship("Vehicle")
-    customer: Mapped["Customer"] = relationship("Customer")
+    vehicle: Mapped[Vehicle | None] = relationship("Vehicle")
+    customer: Mapped[Customer] = relationship("Customer")
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<PartRequest {self.part_name!r} status={self.status}>"

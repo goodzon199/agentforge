@@ -4,7 +4,7 @@ import smtplib
 import time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from typing import Any
+from typing import Any, ClassVar
 
 from app.core.config import settings
 from app.reliability.circuit_breaker import get_breaker
@@ -22,7 +22,7 @@ class EmailTool(BaseTool):
     name = "email"
     description = "Отправить письмо на e-mail (SMTP)."
     version = "2.0.0"
-    input_schema: dict[str, Any] = {
+    input_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
         "properties": {
             "to": {"type": "string"},
@@ -81,7 +81,7 @@ class EmailTool(BaseTool):
                         "transport": f"{settings.smtp_host}:{settings.smtp_port}",
                     },
                 )
-            except Exception as exc:  # noqa: BLE001 - normalize every failure
+            except Exception as exc:
                 last_error = exc
                 kind = classify_exception(exc)
                 if policy.should_retry(kind, attempt):

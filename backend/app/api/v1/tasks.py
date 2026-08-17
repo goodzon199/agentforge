@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.api.access import company_scope, ensure_company
 from app.api.deps import get_current_user, get_task_service
+from app.core.emergency import emergency_switch
 from app.models import DeadTask, User
 from app.orchestrator.orchestrator import orchestrator
 from app.schemas.task import (
@@ -19,6 +20,14 @@ from app.schemas.task import (
 from app.services.task_service import TaskService
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
+
+
+def _require_running() -> None:
+    if emergency_switch.is_engaged():
+        raise HTTPException(
+            status_code=503,
+            detail="Пилотная эксплуатация приостановлена: новые задачи не принимаются.",
+        )
 
 
 def _read(task) -> TaskRead:
@@ -54,6 +63,7 @@ def create_task(
     service: TaskService = Depends(get_task_service),
 ):
     ensure_company(user, payload.company_id)
+    _require_running()
     task = service.create(**payload.model_dump())
     service.db.commit()
     service.db.refresh(task)
@@ -89,6 +99,7 @@ def replay_task(
     if original is None:
         raise HTTPException(status_code=404, detail="Задача не найдена")
     ensure_company(user, original.company_id)
+    _require_running()
     try:
         task = service.replay(task_id)
     except ValueError as exc:

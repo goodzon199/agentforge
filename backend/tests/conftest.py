@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import threading
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -14,6 +16,8 @@ from app.core.database import Base, get_db
 from app.core.seeding import seed_demo
 
 Behaviour = Callable[[str], tuple[int, Any, dict[str, str]]]
+
+TEST_ADMIN_PASSWORD = "test-admin-pass-123"
 
 
 class _FakeServerHandler(BaseHTTPRequestHandler):
@@ -44,10 +48,8 @@ class _FakeServerHandler(BaseHTTPRequestHandler):
             self.send_header(key, value)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        try:
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError):
             self.wfile.write(body)
-        except (BrokenPipeError, ConnectionResetError):
-            pass
 
     def log_message(self, *args: Any) -> None:
         pass
@@ -71,6 +73,23 @@ def fake_server() -> ThreadingHTTPServer:
         thread.join(timeout=5)
 
 
+@pytest.fixture(autouse=True)
+def _reset_trace_context():
+    """Isolate the tracing context between tests.
+
+    ``begin_trace`` pushes its root frame onto the thread-local contextvar
+    and nothing pops it (the frame is normally discarded with the FastAPI
+    request context). In synchronous tests that frame leaks into the next
+    test and would make ``trace()`` attach to a stale trace instead of
+    opening a new one.
+    """
+    from app.tracing import tracer
+
+    tracer._current.set(())
+    yield
+    tracer._current.set(())
+
+
 @pytest.fixture
 def db_session():
     engine = create_engine(
@@ -83,7 +102,15 @@ def db_session():
     )
     Base.metadata.create_all(engine)
     db = TestingSession()
-    seed_demo(db)
+    # The bootstrap admin is only created when an explicit password is set
+    # (no hardcoded demo credentials anymore). Give the test DB a strong one.
+    from app.core.config import settings
+
+    settings.seed_admin_password = TEST_ADMIN_PASSWORD
+    # Customer-facing demo data (reliability telemetry, garage customer with
+    # orders) is skipped so tests do not depend on demo customers/orders in
+    # global queries (e.g. select(PartRequest).first()).
+    seed_demo(db, include_customer_demo=False)
     yield db
     db.close()
     Base.metadata.drop_all(engine)

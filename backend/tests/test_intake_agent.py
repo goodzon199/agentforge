@@ -65,7 +65,6 @@ def test_intake_creates_part_request_and_asks_for_vin(
 
 
 def test_intake_uses_valid_llm_result(db_session, make_conversation):
-    from app.agents.intake_agent import IntakeAgent
     from app.llm.types import LLMMessage
 
     payload = json.dumps(
@@ -102,8 +101,8 @@ def test_intake_uses_valid_llm_result(db_session, make_conversation):
 
 
 def test_intake_bare_vin_not_missed_by_llm(db_session, make_conversation):
-    from app.models import PartRequest
     from app.llm.types import LLMMessage
+    from app.models import PartRequest
 
     payload = json.dumps(
         {
@@ -137,8 +136,8 @@ def test_intake_bare_vin_not_missed_by_llm(db_session, make_conversation):
 
 
 def test_intake_injects_vin_llm_missed(db_session, make_conversation):
-    from app.models import PartRequest
     from app.llm.types import LLMMessage
+    from app.models import PartRequest
 
     payload = json.dumps(
         {

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 from app.tools.base import BaseTool, ToolResult
 
@@ -12,7 +12,7 @@ class HttpTool(BaseTool):
 
     name = "http"
     description = "Perform an HTTP request (GET/POST) to a configured external API."
-    input_schema: dict[str, Any] = {
+    input_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
         "properties": {
             "url": {"type": "string"},

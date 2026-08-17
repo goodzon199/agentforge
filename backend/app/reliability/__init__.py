@@ -19,13 +19,13 @@ from app.reliability.retry import RetryPolicy, get_policy
 
 __all__ = [
     "BREAKER_NAMES",
+    "FAILURE_CODES",
+    "TRANSIENT",
     "BreakerState",
     "CircuitBreaker",
-    "RedisCircuitBreaker",
-    "FAILURE_CODES",
     "FailureKind",
+    "RedisCircuitBreaker",
     "RetryPolicy",
-    "TRANSIENT",
     "breaker_registry",
     "classify_exception",
     "from_llm_kind",

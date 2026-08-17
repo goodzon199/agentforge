@@ -9,7 +9,6 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
-    Integer,
     String,
     Text,
 )
@@ -36,7 +35,7 @@ class ShortMemory(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     meta: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    agent: Mapped["Agent"] = relationship("Agent")
+    agent: Mapped[Agent] = relationship("Agent")
 
 
 class LongMemory(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -57,7 +56,7 @@ class LongMemory(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     confidence: Mapped[float] = mapped_column(Float, nullable=False, default=1.0)
 
-    agent: Mapped["Agent"] = relationship("Agent")
+    agent: Mapped[Agent] = relationship("Agent")
 
 
 class KnowledgeEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -93,4 +92,4 @@ class MemoryEntry(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     meta: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
-    agent: Mapped["Agent"] = relationship("Agent")
+    agent: Mapped[Agent] = relationship("Agent")

@@ -58,10 +58,10 @@ def _make_part_request(db_session, *, article="", part_name="Тормозные 
 
 
 def _seeded_supplier(db_session):
-    from app.core.seeding import DEMO_SUPPLIERS, DEMO_COMPANY_SLUG
+    from app.core.seeding import DEMO_COMPANY_SLUG, DEMO_SUPPLIERS
     from app.models import Company, Supplier
 
-    company = db_session.scalars(
+    db_session.scalars(
         select(Company).where(Company.slug == DEMO_COMPANY_SLUG)
     ).first()
     return db_session.scalars(
@@ -70,9 +70,8 @@ def _seeded_supplier(db_session):
 
 
 def _add_supplier(db_session, *, name, adapter_type, is_active=True, settings=None):
-    from app.models import Supplier
     from app.core.seeding import DEMO_COMPANY_SLUG
-    from app.models import Company
+    from app.models import Company, Supplier
 
     company = db_session.scalars(
         select(Company).where(Company.slug == DEMO_COMPANY_SLUG)
@@ -189,7 +188,6 @@ def test_search_no_offers_returns_to_ready(db_session):
 
 
 def test_unsupported_query_supplier_is_skipped_not_failed(db_session):
-    from app.models.enums import SupplierAttemptStatus
 
     _add_supplier(db_session, name="Без артикула", adapter_type="noarticle")
     pr = _make_part_request(db_session, part_name="колодки")
@@ -209,7 +207,6 @@ def test_unsupported_query_supplier_is_skipped_not_failed(db_session):
 
 
 def test_unsupported_query_supplier_skipped_when_no_offers_at_all(db_session):
-    from app.models.enums import SupplierAttemptStatus
 
     _seeded_supplier(db_session).is_active = False
     db_session.commit()

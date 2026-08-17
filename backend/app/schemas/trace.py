@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.common import ORMModel
 
@@ -50,18 +50,18 @@ class TraceSummary(ORMModel):
     source: str
     created_at: datetime
     span_count: int = 0
-    error_kinds: list[str] = []
+    error_kinds: list[str] = Field(default_factory=list)
 
 
 class TraceDetail(TraceRead):
-    spans: list[SpanRead] = []
+    spans: list[SpanRead] = Field(default_factory=list)
 
 
 class SpanNode(BaseModel):
     """A span plus its children, for tree rendering on the frontend."""
 
     span: SpanRead
-    children: list["SpanNode"] = []
+    children: list[SpanNode] = Field(default_factory=list)
 
 
 class TraceTree(BaseModel):

@@ -3,9 +3,10 @@ from __future__ import annotations
 import contextvars
 import logging
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
-from typing import Any, Iterator
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -50,7 +51,7 @@ def unbind_db(token: contextvars.Token) -> None:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _kind(exc: BaseException) -> str:
@@ -103,7 +104,7 @@ def begin_trace(
     db.flush()
     # Make the root span the active parent for subsequent spans created in the
     # same context (the API request that opened the trace).
-    _current.set(_current.get() + ((trace.id, root.id),))
+    _current.set((*_current.get(), (trace.id, root.id)))
     return trace
 
 
@@ -143,6 +144,82 @@ def maybe_finish_trace(db: Session, trace_id: uuid.UUID | None) -> None:
     finish_trace(db, trace_id, status=status)
 
 
+def _finalize_on_unwind(db: Session, trace_id: uuid.UUID) -> None:
+    """Trigger trace finalization when all of its span frames unwound.
+
+    Called from the ``trace`` contextmanager after the outermost frame is
+    popped. Two shapes are recognised as "fully unwound":
+
+      * the context stack for this trace is empty (worker thread), or
+      * only the dangling root frame remains — the marker ``begin_trace``
+        left on the API request's stack that nothing ever pops.
+
+    ``maybe_finish_trace`` closes the trace (and its root span) once every
+    task reached a terminal state; if more work is still queued the trace
+    legitimately stays ``running``. This is the guarantee that a trace can
+    never stay ``running`` after its work finished, even when no task ever
+    referenced it (span-only traces).
+    """
+    trace = db.get(Trace, trace_id)
+    if trace is None or trace.status != "running":
+        return
+    frames = [f for f in _current.get() if f[0] == trace_id]
+    if len(frames) > 1:
+        return  # deeper frames for this trace are still active
+    if len(frames) == 1 and frames[0][1] != trace.root_span_id:
+        return  # the remaining frame is not this trace's root marker
+    maybe_finish_trace(db, trace_id)
+
+
+def reconcile_stale_traces(
+    db: Session,
+    *,
+    max_age_seconds: float = 600.0,
+    now: datetime | None = None,
+) -> int:
+    """Watchdog: no trace may stay ``running`` forever.
+
+    Closes traces whose every task reached a terminal state even when
+    ``maybe_finish_trace`` was never called for them (span-only traces,
+    a worker that died between the last task and the finalization call).
+    Traces still running after ``max_age_seconds`` with no open tasks are
+    closed too (marked failed when spans are left unfinished). Returns how
+    many traces were closed.
+    """
+    now = now or _now()
+    age_limit = now - timedelta(seconds=max_age_seconds)
+    running = list(
+        db.scalars(select(Trace).where(Trace.status == "running")).unique().all()
+    )
+    closed = 0
+    for trace in running:
+        open_tasks = db.scalar(
+            select(func.count())
+            .select_from(Task)
+            .where(Task.trace_id == trace.id, Task.status.in_(_NON_TERMINAL))
+        )
+        if open_tasks:
+            continue
+        unfinished = db.scalar(
+            select(func.count())
+            .select_from(Span)
+            .where(Span.trace_id == trace.id, Span.finished_at.is_(None))
+        )
+        if unfinished and trace.started_at >= age_limit:
+            continue  # young trace with active spans — give it more time
+        failed = db.scalar(
+            select(func.count())
+            .select_from(Task)
+            .where(Task.trace_id == trace.id, Task.status == TaskStatus.failed)
+        )
+        status = "failed" if (failed or unfinished) else "completed"
+        finish_trace(db, trace.id, status=status)
+        closed += 1
+    if closed:
+        db.commit()
+    return closed
+
+
 def resolve_trace_for_conversation(
     db: Session,
     conversation_id: uuid.UUID | None,
@@ -178,9 +255,9 @@ def _duration_ms(started_at: datetime, finished_at: datetime) -> int:
     # SQLite returns naive datetimes even for timezone=True columns; normalise
     # both sides so timedelta arithmetic never mixes naive and aware values.
     if started_at.tzinfo is None:
-        started_at = started_at.replace(tzinfo=timezone.utc)
+        started_at = started_at.replace(tzinfo=UTC)
     if finished_at.tzinfo is None:
-        finished_at = finished_at.replace(tzinfo=timezone.utc)
+        finished_at = finished_at.replace(tzinfo=UTC)
     return max(0, int((finished_at - started_at).total_seconds() * 1000))
 
 
@@ -276,10 +353,10 @@ def trace(
     )
     db.add(sp)
     db.flush()
-    token = _current.set(_current.get() + ((tid, sp.id),))
+    token = _current.set((*_current.get(), (tid, sp.id)))
     try:
         yield sp
-    except Exception as exc:  # noqa: BLE001 - spans must never hide the error
+    except Exception as exc:
         sp.status = "failed"
         sp.error_kind = _kind(exc)
         raise
@@ -293,6 +370,13 @@ def trace(
             db.flush()
         except Exception:  # pragma: no cover - tracing must not break the flow
             logger.exception("Не удалось сохранить спан %s", span_type)
+        # Guarantee: once the last frame of this trace unwound, close the
+        # trace so it can never stay "running" after its work finished.
+        try:
+            _finalize_on_unwind(db, tid)
+            db.flush()
+        except Exception:  # pragma: no cover
+            logger.exception("Не удалось финализировать трассировку %s", tid)
 
 
 def record_span(

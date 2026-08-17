@@ -61,7 +61,7 @@ def _text(el: ET.Element, name: str, default: str = "") -> str:
 
 
 class _Stock:
-    __slots__ = ("price", "count", "delivery")
+    __slots__ = ("count", "delivery", "price")
 
     def __init__(self, price: Decimal | None, count: int | None, delivery: int | None) -> None:
         self.price = price
@@ -70,7 +70,7 @@ class _Stock:
 
 
 class _Part:
-    __slots__ = ("brand", "partnumber", "name", "stocks", "crosses")
+    __slots__ = ("brand", "crosses", "name", "partnumber", "stocks")
 
     def __init__(
         self,
@@ -219,7 +219,7 @@ class RosskoAdapter(SupplierAdapter):
             return bool(result)  # structured SOAP answer => endpoint reachable
         except SupplierAdapterError:
             return False
-        except Exception:  # noqa: BLE001 - healthcheck is best-effort
+        except Exception:
             return False
 
     # --- SOAP plumbing -----------------------------------------------------
@@ -259,7 +259,7 @@ class RosskoAdapter(SupplierAdapter):
 
     async def _soap_call(
         self, method: str, params: dict[str, str]
-    ) -> "_RosskoResult":
+    ) -> _RosskoResult:
         body = self._envelope(method, params)
         # Circuit breaker "rossko": when open, fail fast instead of waiting
         # for a timeout on a provider we already know is down.
@@ -328,7 +328,7 @@ class RosskoAdapter(SupplierAdapter):
                 breaker.record_failure()
             return result
 
-    def _parse(self, response: httpx.Response) -> "_RosskoResult":
+    def _parse(self, response: httpx.Response) -> _RosskoResult:
         try:
             root = ET.fromstring(response.content)
         except ET.ParseError as exc:
@@ -366,7 +366,7 @@ class RosskoAdapter(SupplierAdapter):
         return parts
 
     @staticmethod
-    def _parse_part(part_el: ET.Element, crosses: list["_Part"] | None = None) -> _Part:
+    def _parse_part(part_el: ET.Element, crosses: list[_Part] | None = None) -> _Part:
         stock_list = _direct(part_el, "stocks")
         stock_elts = _direct(stock_list[0], "stock") if stock_list else []
         stocks = [
@@ -394,7 +394,7 @@ class RosskoAdapter(SupplierAdapter):
             return "auth"
         return "response"
 
-    def _raise_business_error(self, result: "_RosskoResult", *, status: int) -> None:
+    def _raise_business_error(self, result: _RosskoResult, *, status: int) -> None:
         message = result.message or f"Ошибка сервиса Rossko (HTTP {status})."
         if result.kind == "auth":
             raise SupplierAuthError(
@@ -468,7 +468,7 @@ class RosskoAdapter(SupplierAdapter):
 
 
 class _RosskoResult:
-    __slots__ = ("success", "kind", "message", "parts", "status")
+    __slots__ = ("kind", "message", "parts", "status", "success")
 
     def __init__(
         self,

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { useApi } from "@/lib/useApi";
+import { useCallback, useEffect, useState } from "react";
+import { api } from "@/lib/api";
 import type { AuditEvent, AuditList } from "@/lib/types";
 import { EmptyState, ErrorBox, Loading, SectionHeader } from "@/components/ui";
 
@@ -12,6 +12,11 @@ const ACTION_LABEL: Record<string, string> = {
   "order.create": "Заказ создан",
   "task.replay": "Задача повторена",
   "user.create": "Создан пользователь",
+  "user.update": "Пользователь обновлён",
+  "user.disable": "Пользователь отключён",
+  "user.enable": "Пользователь включён",
+  "user.reset_password": "Сброс пароля пользователя",
+  "user.change_password": "Смена пароля",
 };
 
 const ENTITY_LABEL: Record<string, string> = {
@@ -26,40 +31,113 @@ function actionColor(action: string): string {
   if (action.startsWith("approval.reject")) return "bg-rose-500/15 text-rose-300";
   if (action === "order.create") return "bg-emerald-500/15 text-emerald-300";
   if (action.startsWith("task.replay")) return "bg-blue-500/15 text-blue-300";
+  if (action.startsWith("user.")) return "bg-violet-500/15 text-violet-300";
   return "bg-slate-500/15 text-slate-300";
 }
 
 export default function AuditPage() {
-  const { data, loading, error, reload } = useApi<AuditList>("/audit?limit=100");
+  const [data, setData] = useState<AuditList | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<AuditEvent | null>(null);
+  const [action, setAction] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+
+  const buildQuery = useCallback((cursor?: string) => {
+    const params = new URLSearchParams({ limit: "50" });
+    if (action) params.set("action", action);
+    if (dateFrom) params.set("date_from", new Date(dateFrom).toISOString());
+    if (dateTo) params.set("date_to", new Date(dateTo).toISOString());
+    if (cursor) params.set("cursor", cursor);
+    return `/audit?${params.toString()}`;
+  }, [action, dateFrom, dateTo]);
+
+  const load = useCallback(async (cursor?: string) => {
+    setError(null);
+    setLoading(true);
+    try {
+      const page = await api.get<AuditList>(buildQuery(cursor));
+      setData((prev) =>
+        cursor && prev
+          ? { ...page, items: [...prev.items, ...page.items] }
+          : page,
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Не удалось загрузить журнал");
+    } finally {
+      setLoading(false);
+    }
+  }, [buildQuery]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   return (
     <div>
       <SectionHeader title="Аудит" />
 
+      <div className="mb-4 flex flex-wrap items-end gap-3">
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">Действие</label>
+          <select
+            className="input w-52"
+            value={action}
+            onChange={(e) => setAction(e.target.value)}
+          >
+            <option value="">Все</option>
+            {Object.entries(ACTION_LABEL).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">С</label>
+          <input
+            type="date"
+            className="input"
+            value={dateFrom}
+            onChange={(e) => setDateFrom(e.target.value)}
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-slate-500">По</label>
+          <input
+            type="date"
+            className="input"
+            value={dateTo}
+            onChange={(e) => setDateTo(e.target.value)}
+          />
+        </div>
+        <button
+          onClick={() => load()}
+          className="rounded-md border border-surface-border px-3 py-1.5 text-xs text-slate-300 transition hover:bg-surface-hover"
+        >
+          Применить
+        </button>
+      </div>
+
       <div className="mb-6 grid gap-4 lg:grid-cols-5">
         <div className="lg:col-span-2">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-medium text-slate-300">Журнал действий</h2>
-            <button
-              onClick={reload}
-              className="rounded-md px-2 py-1 text-xs text-slate-400 transition hover:bg-surface-hover hover:text-slate-200"
-            >
-              Обновить
-            </button>
+            <span className="text-xs text-slate-500">всего: {data?.total ?? "…"}</span>
           </div>
-          {loading ? (
+          {loading && !data ? (
             <Loading />
           ) : error ? (
             <ErrorBox message={error} />
           ) : data && data.items.length === 0 ? (
             <EmptyState
               title="Событий нет"
-              description="Здесь появятся одобрения, заказы, повторы задач и создание пользователей."
+              description="Здесь появятся одобрения, заказы, повторы задач и действия с пользователями."
             />
           ) : (
             <div className="card p-0">
-              <div className="max-h-[75vh] overflow-y-auto">
+              <div className="max-h-[65vh] overflow-y-auto">
                 {data?.items.map((e) => (
                   <button
                     key={e.id}
@@ -83,10 +161,14 @@ export default function AuditPage() {
                   </button>
                 ))}
               </div>
-              {data && data.total > data.items.length ? (
-                <div className="border-t border-surface-border px-4 py-2 text-xs text-slate-500">
-                  Показано {data.items.length} из {data.total}
-                </div>
+              {data?.next_cursor ? (
+                <button
+                  onClick={() => load(data.next_cursor!)}
+                  disabled={loading}
+                  className="block w-full border-t border-surface-border px-4 py-2 text-center text-xs text-slate-400 transition hover:bg-surface-hover hover:text-slate-200"
+                >
+                  {loading ? "Загружаем…" : "Загрузить ещё"}
+                </button>
               ) : null}
             </div>
           )}
@@ -135,6 +217,24 @@ export default function AuditPage() {
                   <dt className="text-xs text-slate-500">Сущность</dt>
                   <dd className="truncate font-mono text-xs text-slate-300">
                     {selected.entity_id ?? "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-slate-500">IP</dt>
+                  <dd className="truncate font-mono text-xs text-slate-300">
+                    {selected.ip_address ?? "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-slate-500">Request ID</dt>
+                  <dd className="truncate font-mono text-xs text-slate-300">
+                    {selected.request_id ?? "—"}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-slate-500">User-Agent</dt>
+                  <dd className="truncate font-mono text-xs text-slate-300">
+                    {selected.user_agent ?? "—"}
                   </dd>
                 </div>
               </dl>

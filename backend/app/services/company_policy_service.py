@@ -66,7 +66,7 @@ class CompanyPolicyService:
             if payload is None:
                 continue
             if not isinstance(payload, dict):
-                raise ValueError(f"Политика «{domain}» должна быть объектом.")
+                raise TypeError(f"Политика «{domain}» должна быть объектом.")
             current = merge_policy(
                 DEFAULT_POLICIES[domain], getattr(row, f"{domain}_policy")
             )

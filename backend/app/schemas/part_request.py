@@ -56,6 +56,9 @@ class SupplierOfferRead(BaseModel):
     customer_price: Decimal | None = None
     total_price: Decimal | None = None
     margin_percent: Decimal | None = None
+    rank: int | None = None
+    rank_score: Decimal | None = None
+    rank_reasons: list[str] | None = None
     created_at: datetime
 
 

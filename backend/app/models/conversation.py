@@ -33,8 +33,8 @@ class Conversation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("users.id", ondelete="SET NULL"), index=True, nullable=True
     )
 
-    customer: Mapped["Customer"] = relationship("Customer", back_populates="conversations")
-    messages: Mapped[list["ConversationMessage"]] = relationship(
+    customer: Mapped[Customer] = relationship("Customer", back_populates="conversations")
+    messages: Mapped[list[ConversationMessage]] = relationship(
         "ConversationMessage",
         back_populates="conversation",
         cascade="all, delete-orphan",

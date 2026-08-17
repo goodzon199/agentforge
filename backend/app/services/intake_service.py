@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.models import Conversation, ConversationMessage, PartRequest, Vehicle
+from app.models import Conversation, ConversationMessage, Customer, PartRequest, Vehicle
 from app.models.enums import PartRequestStatus
 from app.schemas.intake import IntakeResult
+from app.services.audit_service import AuditService
 from app.services.conversation_service import ConversationService
 from app.services.part_request_service import PartRequestService
 from app.services.task_service import TaskService
@@ -30,10 +29,7 @@ def _is_placeholder(value: str) -> bool:
     to the customer (e.g. the LLM literally returned "...|null" or "null")."""
     question = (value or "").strip().lower()
     return (
-        question in _PLACEHOLDER_TOKENS
-        or question.startswith("...")
-        or question.startswith("|")
-        or question.endswith("|null")
+        question in _PLACEHOLDER_TOKENS or question.startswith(("...", "|")) or question.endswith("|null")
     )
 
 
@@ -112,6 +108,23 @@ class IntakeService:
         )
         self.db.flush()
 
+        # Pilot event log (sprint 3.7.1): record the funnel milestones
+        # customer_message_received -> part_request_created/updated.
+        self._record_audit(
+            conversation=conversation,
+            message=message,
+            part_request=part_request,
+            created=created,
+            intent="part_search",
+        )
+
+        # Shadow Mode (sprint 3.8.1): open a comparison for the new request so
+        # Agentos and the manager run in parallel (customer sees the manager).
+        if created:
+            from app.services.shadow_service import ShadowService
+
+            ShadowService(self.db).ensure_for_part_request(part_request)
+
         missing = self._missing_fields(part_request, vehicle)
         ready = not missing
         part_request.missing_fields = missing
@@ -119,6 +132,14 @@ class IntakeService:
             part_request.status = PartRequestStatus.ready_for_search
         else:
             part_request.status = PartRequestStatus.collecting_data
+        self.db.flush()
+
+        # Fitment Engine (sprint 4.0): snapshot the real fitment confidence
+        # (catalog/OEM/cross/supplier/history/manager/returns) so analytics and
+        # the manager dashboard read one source of truth, not a proxy.
+        from app.services.fitment_service import FitmentService
+
+        part_request.structured_data["fitment"] = FitmentService(self.db).snapshot(part_request)
         self.db.flush()
 
         processed = part_request.structured_data.get(_SOURCE_OF_TRUTH_KEY, [])
@@ -148,6 +169,40 @@ class IntakeService:
 
     # --- Internals ---------------------------------------------------------
 
+    def _record_audit(
+        self,
+        *,
+        conversation: Conversation,
+        message: ConversationMessage,
+        part_request: PartRequest,
+        created: bool,
+        intent: str,
+    ) -> None:
+        """Append pilot-funnel milestones to the audit journal."""
+        audit = AuditService(self.db)
+        audit.record(
+            action="customer_message_received",
+            entity_type="conversation_message",
+            entity_id=str(message.id),
+            company_id=conversation.company_id,
+            detail={
+                "conversation_id": str(conversation.id),
+                "intent": intent,
+            },
+        )
+        audit.record(
+            action="part_request_created" if created else "part_request_updated",
+            entity_type="part_request",
+            entity_id=str(part_request.id),
+            company_id=conversation.company_id,
+            detail={
+                "conversation_id": str(conversation.id),
+                "source_message_id": str(message.id),
+                "ready_for_search": part_request.status
+                == PartRequestStatus.ready_for_search,
+            },
+        )
+
     def _upsert_vehicle(
         self,
         conversation: Conversation,
@@ -156,7 +211,10 @@ class IntakeService:
     ) -> Vehicle | None:
         v = result.vehicle
         if v is None:
-            return self._existing_vehicle(active)
+            existing = self._existing_vehicle(active)
+            if existing is not None:
+                return existing
+            return self._garage_vehicle(conversation)
         facts = {
             "vin": (v.vin or "").strip(),
             "brand": (v.brand or "").strip(),
@@ -167,11 +225,15 @@ class IntakeService:
             "registration_number": (v.registration_number or "").strip(),
         }
         if not any(facts.values()):
-            return self._existing_vehicle(active)
+            existing = self._existing_vehicle(active)
+            if existing is not None:
+                return existing
+            return self._garage_vehicle(conversation)
 
         pr_service = PartRequestService(self.db)
         existing = (
             self._existing_vehicle(active)
+            or self._garage_vehicle(conversation, result)
             or pr_service.find_vehicle(
                 company_id=conversation.company_id,
                 customer_id=conversation.customer_id,
@@ -190,6 +252,44 @@ class IntakeService:
             customer_id=conversation.customer_id,
             **facts,
         )
+
+    def _garage_vehicle(
+        self,
+        conversation: Conversation,
+        result: IntakeResult | None = None,
+    ) -> Vehicle | None:
+        """Sprint 4.4: reuse the customer's garage so a short message like
+        "need an air filter" is matched to their car without re-asking.
+
+        Prefer a garage car whose brand/model matches whatever the customer
+        mentioned (e.g. "filter for the BMW"), else the default vehicle.
+        """
+        from app.services.garage_service import CustomerGarageService
+
+        customer = self.db.get(Customer, conversation.customer_id)
+        if customer is None:
+            return None
+        service = CustomerGarageService(self.db)
+        vehicles = service.list_vehicles(customer)
+        if not vehicles:
+            return None
+        if result is not None and result.vehicle is not None:
+            wanted_brand = (result.vehicle.brand or "").strip().lower()
+            wanted_model = (result.vehicle.model or "").strip().lower()
+            for vehicle in vehicles:
+                brand = (vehicle.brand or "").lower()
+                model = (vehicle.model or "").lower()
+                if wanted_brand and wanted_model:
+                    if wanted_brand in brand and wanted_model in model:
+                        return vehicle
+                elif (
+                    (wanted_brand
+                    and wanted_brand == brand)
+                    or (wanted_model
+                    and wanted_model in model)
+                ):
+                    return vehicle
+        return service.default_vehicle(customer)
 
     def _existing_vehicle(self, active: PartRequest | None) -> Vehicle | None:
         if active is None or active.vehicle_id is None:
@@ -216,6 +316,9 @@ class IntakeService:
             active.quantity = quantity or active.quantity
             active.source_message_id = message.id
             active.intent = "part_search"
+            active.structured_data["intent_confidence"] = getattr(
+                result, "confidence", None
+            )
             if vehicle is not None:
                 active.vehicle_id = vehicle.id
             return active, False
@@ -231,6 +334,7 @@ class IntakeService:
             vehicle_id=vehicle.id if vehicle is not None else None,
             intent="part_search",
             status=PartRequestStatus.collecting_data,
+            structured_data={"intent_confidence": getattr(result, "confidence", None)},
         )
         return part_request, True
 

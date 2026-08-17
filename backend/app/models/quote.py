@@ -3,9 +3,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
 
-from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Numeric, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -55,6 +54,17 @@ class Quote(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # QuoteGuard result for the latest draft.
     guard_status: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
     guard_errors: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    # Optimistic-lock version: bumped whenever the quote content changes so a
+    # stale worker can never auto-send an outdated snapshot (sprint 3.8.3a).
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    # Sprint 3.8.3a — Controlled Auto audit trail. When the system decides to
+    # send a quote without a human, the full decision snapshot is stored here
+    # so we can reconstruct months later why THIS quote went out unattended.
+    auto_send_decision: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    auto_sent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    auto_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Which SalesAgent prompt version produced ai_draft (sprint 3.2).
     prompt_version: Mapped[str | None] = mapped_column(String(40), nullable=True)

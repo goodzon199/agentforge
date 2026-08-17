@@ -154,9 +154,7 @@ def test_convert_draft_conflict(client, db_session):
 def test_convert_manager_only(client, db_session):
     quote_id, conversation_id, _ = _sent_quote(client, db_session)
 
-    from app.api.deps import get_current_user
     from app.core.config import settings
-    from app.main import app
     from app.models import User
 
     admin = db_session.scalars(

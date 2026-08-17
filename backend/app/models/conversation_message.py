@@ -26,7 +26,7 @@ class ConversationMessage(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     structured_data: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
 
-    conversation: Mapped["Conversation"] = relationship(
+    conversation: Mapped[Conversation] = relationship(
         "Conversation", back_populates="messages"
     )
 

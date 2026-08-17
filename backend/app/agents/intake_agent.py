@@ -126,7 +126,7 @@ class IntakeAgent(BaseAgent):
                 routing_decision={"needs_agent": None, "reason": "not_found", "engine": "intake"},
             )
 
-        result = self._parse(message.content)
+        result = self._parse(message.content, conversation=conversation)
         service = IntakeService(self.db)
         outcome = service.process(
             conversation, message, result, agent_id=self.record.id
@@ -165,15 +165,37 @@ class IntakeAgent(BaseAgent):
 
     # --- Parsing -----------------------------------------------------------
 
-    def _parse(self, text: str) -> IntakeResult:
+    def _parse(
+        self, text: str, conversation: Conversation | None = None
+    ) -> IntakeResult:
         """LLM first (validated), deterministic rules as the fallback."""
+        garage = self._garage_hint(conversation)
         if self.llm.available:
-            result = self._parse_with_llm(text)
+            result = self._parse_with_llm(text, garage=garage)
             if result is not None and result.confidence >= 0.5:
                 return result
         return self._parse_rules(text)
 
-    def _parse_with_llm(self, text: str) -> IntakeResult | None:
+    @staticmethod
+    def _garage_hint(conversation: Conversation | None) -> str:
+        """Sprint 4.4: list the customer's cars so the LLM can disambiguate
+        a short request ("need an air filter") against the known garage."""
+        if conversation is None:
+            return ""
+        customer = conversation.customer
+        if customer is None or not getattr(customer, "vehicles", None):
+            return ""
+        cars = []
+        for v in customer.vehicles:
+            label = " ".join(
+                p for p in (v.brand, v.model, str(v.year) if v.year else "") if p
+            ) or "автомобиль"
+            if v.vin:
+                label += f" (VIN {v.vin})"
+            cars.append(label)
+        return "Известные автомобили клиента (гараж): " + "; ".join(cars) + "."
+
+    def _parse_with_llm(self, text: str, *, garage: str = "") -> IntakeResult | None:
         schema = (
             '{"intent": "part_search|order_status|general_question|complaint|unknown", '
             '"vehicle": {"vin": null, "brand": null, "model": null, '
@@ -193,6 +215,12 @@ class IntakeAgent(BaseAgent):
             "ставь именно JSON null — не пиши текст-заглушки вроде \"...\" или \"...|null\". "
             "Отвечай ТОЛЬКО одним JSON-объектом."
         )
+        if garage:
+            system_prompt += (
+                f"\n{garage} Если клиент не называет автомобиль, укажи его в vehicle "
+                "по контексту (например, если просит фильтр \"на мой BMW\", "
+                "подставь BMW из гаража)."
+            )
         for attempt in (1, 2):
             prompt = (
                 f"Сообщение клиента: {text}\n"

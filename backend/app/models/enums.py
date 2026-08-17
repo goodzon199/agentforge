@@ -154,6 +154,24 @@ class OrderStatus(str, enum.Enum):
     cancelled = "cancelled"
 
 
+class TrackingStatus(str, enum.Enum):
+    """Supplier-side lifecycle of a purchased order (sprint 4.6).
+
+    Mirrors the customer-facing milestones: the supplier accepted the order,
+    is assembling it, shipped it, it arrived at the service, and it was handed
+    over to the customer. ``pending`` means the purchase has not been placed
+    (or approved) yet. The aggregate lives on ``Order.tracking_status`` and is
+    recomputed from the fulfillment lines' ``supplier_status``.
+    """
+
+    pending = "pending"
+    accepted = "accepted"
+    assembling = "assembling"
+    shipped = "shipped"
+    arrived = "arrived"
+    handed_over = "handed_over"
+
+
 class ConversationMode(str, enum.Enum):
     """Who drives a conversation (pilot human takeover, sprint 3).
 

@@ -1,6 +1,7 @@
 import type { PartQuote, PartRequest, SupplierOffer, SupplierSearchRun } from "@/lib/types";
 import { getStoredUser } from "@/lib/api";
 import { StatusBadge } from "@/components/ui";
+import { FitmentCard } from "@/components/conversations/FitmentCard";
 
 const STATUS_LABEL: Record<string, string> = {
   collecting_data: "Требуется уточнение",
@@ -120,6 +121,10 @@ export function PartRequestPanel({
         ) : null}
       </div>
 
+      {active.article ? (
+        <FitmentCard partRequestId={active.id} article={active.article} />
+      ) : null}
+
       {quote && quote.status === "priced" && quote.best_total_price ? (
         <div className="mt-3 rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-xs text-slate-200">
           <span className="font-medium text-white">Лучшее предложение:</span>{" "}
@@ -137,6 +142,7 @@ export function PartRequestPanel({
           <table className="w-full min-w-[560px] text-left text-xs">
             <thead>
               <tr className="border-b border-surface-border text-[11px] uppercase tracking-wide text-slate-500">
+                <th className="py-1.5 pr-3 font-medium">#</th>
                 <th className="py-1.5 pr-3 font-medium">Бренд</th>
                 <th className="py-1.5 pr-3 font-medium">Артикул</th>
                 <th className="py-1.5 pr-3 font-medium">Название</th>
@@ -152,6 +158,22 @@ export function PartRequestPanel({
             <tbody>
               {offers.map((o) => (
                 <tr key={o.id} className="border-b border-surface-border/60">
+                  <td className="py-1.5 pr-3">
+                    {o.rank !== null && o.rank !== undefined ? (
+                      <span
+                        className={
+                          o.rank === 1
+                            ? "inline-flex items-center rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-semibold text-emerald-400"
+                            : "inline-flex items-center rounded-full bg-surface-border/40 px-2 py-0.5 text-xs text-slate-400"
+                        }
+                        title={o.rank_reasons?.length ? o.rank_reasons.join(" · ") : undefined}
+                      >
+                        #{o.rank}
+                      </span>
+                    ) : (
+                      <span className="text-slate-600">—</span>
+                    )}
+                  </td>
                   <td className="py-1.5 pr-3 text-slate-200">{o.brand || "—"}</td>
                   <td className="py-1.5 pr-3 font-mono text-slate-200">{o.article || "—"}</td>
                   <td className="py-1.5 pr-3 text-slate-300">{o.part_name || "—"}</td>

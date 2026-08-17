@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from statistics import median
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import (
     Agent,
     AgentAction,
     AgentFeedback,
-    Conversation,
     LLMUsage,
     PartRequest,
     Quote,
@@ -29,7 +28,7 @@ _FEEDBACK_COUNTS = {
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _pct(count: int, total: int) -> float | None:

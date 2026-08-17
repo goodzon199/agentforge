@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import os
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, ClassVar
 
 from app.suppliers.base import NormalizedSupplierOffer, SupplierAdapter, SupplierSearchQuery
 from app.suppliers.normalize import normalize_article
@@ -31,7 +31,7 @@ class CsvSupplierAdapter(SupplierAdapter):
 
     type = "csv"
 
-    _DEFAULT_COLUMNS = {
+    _DEFAULT_COLUMNS: ClassVar[dict[str, str]] = {
         "brand": "brand",
         "article": "article",
         "name": "name",

@@ -49,7 +49,7 @@ class TaskEventRead(ORMModel):
 
 
 class TaskDetail(TaskRead):
-    events: list[TaskEventRead] = []
+    events: list[TaskEventRead] = Field(default_factory=list)
 
 
 class DeadTaskRead(ORMModel):

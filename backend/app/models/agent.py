@@ -13,7 +13,6 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -74,7 +73,7 @@ class Agent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     avg_success_rate: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     total_llm_calls: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
-    company: Mapped["Company"] = relationship("Company", back_populates="agents")
+    company: Mapped[Company] = relationship("Company", back_populates="agents")
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Agent {self.name!r} ({self.slug}) role={self.role!r}>"

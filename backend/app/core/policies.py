@@ -35,6 +35,13 @@ DEFAULT_APPROVAL_POLICY: dict[str, Any] = {
 
 DEFAULT_SALES_POLICY: dict[str, Any] = {
     "auto_send_quote": False,
+    # Sprint 3.8.3 — Controlled Auto. When auto_send_quote is on, a quote is
+    # sent without a human only if ALL safe conditions hold (intent + fitment
+    # confidence, quote guard, supplier reliability, price cap, standard
+    # request); anything doubtful goes to the manager.
+    "auto_send_min_confidence": 0.7,  # floor for intake intent_confidence (0..1)
+    "auto_send_min_fitment_confidence": 0.9,  # floor for fitment_confidence (0..1)
+    "auto_send_min_supplier_rating": 0.8,  # floor for supplier.settings["rating"] (0..1)
     "use_emojis": True,
     "formal_style": False,
     "show_analogs": True,

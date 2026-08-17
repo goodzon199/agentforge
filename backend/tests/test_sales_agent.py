@@ -145,6 +145,43 @@ def test_send_blocks_quote_guard_violation(client, db_session):
     assert len(failed) == 1
 
 
+def test_send_retry_after_guard_block_is_not_500(client, db_session):
+    part_request_id, quote_id = _priced(client, db_session)
+    draft = client.get(f"/api/v1/quotes/{quote_id}/sales-draft").json()
+
+    bad = "TRW GDB2119 — 6 100 ₽"
+    blocked = client.post(f"/api/v1/quotes/{quote_id}/send", json={"message": bad})
+    assert blocked.status_code == 422
+    assert blocked.json()["detail"]["guard"]["passed"] is False
+
+    # A corrected retry must NOT crash on the UNIQUE idempotency key that the
+    # guard-block audit used to occupy (live 500 regression, post-3.8.3a).
+    good = client.post(
+        f"/api/v1/quotes/{quote_id}/send", json={"message": draft["ai_draft"]}
+    )
+    assert good.status_code == 200
+    result = good.json()
+    assert result["status"] == "pending"
+    assert result["message_sent"] is False
+    assert result["approval_id"]
+
+    # The block is still audited once (guard_blocked key), the retry got its
+    # own send action — no idempotency collision.
+    actions = _actions(client)
+    failed = [
+        a
+        for a in actions
+        if a["action_type"] == "send_customer_message" and a["status"] == "failed"
+    ]
+    assert len(failed) == 1
+    blocked_keys = [
+        a["idempotency_key"]
+        for a in actions
+        if a["action_type"] == "send_customer_message" and a["status"] == "failed"
+    ]
+    assert all(k and k.endswith(":guard_blocked") for k in blocked_keys)
+
+
 def test_send_uses_stored_draft_when_message_omitted(client, db_session):
     part_request_id, quote_id = _priced(client, db_session)
     resp = client.post(f"/api/v1/quotes/{quote_id}/send", json={})

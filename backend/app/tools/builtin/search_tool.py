@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 from app.tools.base import BaseTool, ToolResult
 
@@ -17,7 +17,7 @@ class SearchTool(BaseTool):
         "Search for information, products, articles or parts by natural-language query. "
         "Requires a configured search provider (SearchAgent)."
     )
-    input_schema: dict[str, Any] = {
+    input_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
         "properties": {
             "query": {"type": "string"},

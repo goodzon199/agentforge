@@ -152,9 +152,12 @@ def _read_prompt(p: PromptVersion) -> PromptVersionRead:
 
 
 def _scope_prompt(p: PromptVersion, user: User) -> None:
-    if p.company_id is not None and user.company_id is not None:
-        if str(p.company_id) != str(user.company_id):
-            raise HTTPException(status_code=403, detail="Недоступно для вашей компании.")
+    if (
+        p.company_id is not None
+        and user.company_id is not None
+        and str(p.company_id) != str(user.company_id)
+    ):
+        raise HTTPException(status_code=403, detail="Недоступно для вашей компании.")
 
 
 @router.get("/prompts", response_model=list[PromptVersionRead])
@@ -176,9 +179,12 @@ def create_prompt(
 ):
     service = PromptService(db)
     company_id = payload.company_id or company_scope(user)
-    if payload.company_id is not None and user.company_id is not None:
-        if str(payload.company_id) != str(user.company_id):
-            raise HTTPException(status_code=403, detail="Недоступно для вашей компании.")
+    if (
+        payload.company_id is not None
+        and user.company_id is not None
+        and str(payload.company_id) != str(user.company_id)
+    ):
+        raise HTTPException(status_code=403, detail="Недоступно для вашей компании.")
     row = service.create(
         company_id=company_id,
         agent_kind=payload.agent_kind,

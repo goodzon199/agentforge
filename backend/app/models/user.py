@@ -19,6 +19,14 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     is_superuser: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Bootstrap/temporary accounts must set a real password at first login.
+    # While True, get_current_user only allows /auth/change-password and /auth/me.
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    # Access level inside the tenant: owner | admin | manager | viewer
+    # (default "manager"). The seeded bootstrap admin is the "owner".
+    role: Mapped[str] = mapped_column(String(20), nullable=False, default="manager")
     company_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("companies.id", ondelete="SET NULL"), index=True, nullable=True
     )

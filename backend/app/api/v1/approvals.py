@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from app.api.access import ensure_writer
 from app.api.deps import get_current_user, get_sales_service
 from app.models import User
 from app.schemas.sales import (
@@ -86,9 +87,10 @@ def approve_approval(
     user: User = Depends(get_current_user),
     service: SalesService = Depends(get_sales_service),
 ):
+    ensure_writer(user)
     try:
         result = service.approve(approval_id, user)
-    except Exception as exc:  # noqa: BLE001 - unified error mapping
+    except Exception as exc:
         _handle(exc)
     return ApprovalActionResult(**result)
 
@@ -100,8 +102,9 @@ def reject_approval(
     user: User = Depends(get_current_user),
     service: SalesService = Depends(get_sales_service),
 ):
+    ensure_writer(user)
     try:
         result = service.reject(approval_id, user, payload.rejection_reason)
-    except Exception as exc:  # noqa: BLE001 - unified error mapping
+    except Exception as exc:
         _handle(exc)
     return ApprovalActionResult(**result)

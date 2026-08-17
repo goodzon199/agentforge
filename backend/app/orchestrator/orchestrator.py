@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import time
+from datetime import UTC
 from typing import Any
 
 from sqlalchemy import select
@@ -8,13 +10,14 @@ from sqlalchemy.orm import Session
 
 from app.agents.registry import agent_registry
 from app.core.config import settings
+from app.core.emergency import emergency_switch
 from app.core.redis import redis_client
 from app.llm.client import LLMClient, TaskLLMProxy, llm_client
 from app.memory.service import MemoryService
 from app.models import Agent as AgentRecord
 from app.models import Task, TaskEvent, Trace
 from app.models.enums import TaskStatus
-from app.orchestrator.messages import ResultMessage, TaskMessage
+from app.orchestrator.messages import TaskMessage
 from app.reliability.errors import TRANSIENT, FailureKind, classify_exception
 from app.tools.registry import ToolRegistry, tool_registry
 
@@ -316,6 +319,12 @@ class Orchestrator:
         raw = redis_client.pop("agentos:tasks")
         if raw is None:
             return
+        if emergency_switch.is_engaged():
+            # Global pause: leave the message in the queue untouched and idle.
+            # The task is processed later when the switch is released.
+            redis_client.push_raw("agentos:tasks", raw)
+            time.sleep(1.0)
+            return
         message = TaskMessage.from_dict(raw)
         task = db.get(Task, message.task_id)
         if task is not None:
@@ -413,9 +422,9 @@ class Orchestrator:
 
 
 def _now():
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _as_uuid(value: Any) -> Any:

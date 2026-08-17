@@ -10,6 +10,7 @@ from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import Base, SessionLocal, engine
 from app.core.middleware import (
+    AuditContextMiddleware,
     RequestBodySizeLimitMiddleware,
     RequestLoggingMiddleware,
     SecurityHeadersMiddleware,
@@ -145,8 +146,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Middleware order: outermost first. Request logging wraps everything so every
-# request (even rejected ones) is logged with a correlation id.
+# Middleware order: outermost first. The audit-context middleware assigns the
+# correlation id and captures client metadata for every request; request
+# logging reuses that id so access logs and the audit journal correlate.
+app.add_middleware(AuditContextMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestBodySizeLimitMiddleware)

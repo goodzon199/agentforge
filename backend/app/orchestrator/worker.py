@@ -52,9 +52,11 @@ class QueueWorker:
                 if now - last_sweep >= 5.0:
                     from app.services.parts_search_service import PartsSearchService
                     from app.services.task_service import TaskService
+                    from app.tracing.tracer import reconcile_stale_traces
 
                     TaskService(db).mark_stale_tasks()
                     PartsSearchService(db).mark_stale_runs()
+                    reconcile_stale_traces(db)
                     last_sweep = now
             except Exception:  # pragma: no cover - worker must survive errors
                 logger.exception("Ошибка в воркере очереди")

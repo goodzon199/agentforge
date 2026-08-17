@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import ForeignKey, Index, JSON, String
+from sqlalchemy import JSON, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -35,6 +35,10 @@ class AuditEvent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         String(36), nullable=True, index=True
     )
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Request correlation id (X-Request-ID) and user-agent, captured by the
+    # audit-context middleware. request_id links the journal to access logs.
+    request_id: Mapped[str | None] = mapped_column(String(40), nullable=True, index=True)
+    user_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Free-form JSON with the relevant before/after values (never secrets).
     detail: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 

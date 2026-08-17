@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
-from typing import Any, Iterable
+from typing import Any
 
 # "AI формулирует. Система принимает решения." — QuoteGuard is the deterministic
 # wall between an LLM's wording and a fact. It validates a sales message against
@@ -107,6 +108,15 @@ class QuoteGuard:
                 errors.append(
                     f"Товар «{token}» отсутствует в квоте — его нельзя предлагать клиенту."
                 )
+
+        # Supplier articles are often purely numeric (e.g. "6417", "301018") and
+        # would never match the letter-prefixed token regex above. A known quote
+        # article present anywhere in the (normalised) text is a fact: recognise
+        # it without inventing brand-less false positives or blocking retries.
+        compressed = re.sub(r"[^A-Z0-9]", "", upper)
+        for norm in sorted(known_articles, key=len, reverse=True):
+            if norm and norm in compressed and norm not in facts["articles"]:
+                facts["articles"].append(norm)
 
         mentioned_brands = [
             b for b in known_brands if b and re.search(rf"\b{re.escape(b)}\b", upper)

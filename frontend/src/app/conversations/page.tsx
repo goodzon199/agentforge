@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 import type {
@@ -17,12 +18,15 @@ import type {
   PartRequest,
   QuoteSendResult,
   SalesDraft,
+  ShadowComparison,
+  ShadowList,
   SupplierOffer,
   SupplierSearchRun,
 } from "@/lib/types";
 import { EmptyState, ErrorBox, Loading, SectionHeader, StatusBadge } from "@/components/ui";
 import { PartRequestPanel } from "@/components/conversations/PartRequestPanel";
 import { QuoteSalesPanel } from "@/components/conversations/QuoteSalesPanel";
+import { ShadowPanel } from "@/components/conversations/ShadowPanel";
 
 const ACTIVE_STATUSES = ["collecting_data", "ready_for_search", "searching", "quoted"];
 
@@ -56,6 +60,7 @@ function activePartRequest(partRequests: PartRequest[]): PartRequest | undefined
 }
 
 export default function ConversationsPage() {
+  const searchParams = useSearchParams();
   const { data: conversations, loading, error, reload, setData } = useApi<Conversation[]>("/conversations");
   const { data: companies } = useApi<Company[]>("/companies");
 
@@ -71,6 +76,7 @@ export default function ConversationsPage() {
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [salesBusy, setSalesBusy] = useState(false);
+  const [shadow, setShadow] = useState<ShadowList | null>(null);
 
   // Create-customer form
   const [showNew, setShowNew] = useState(false);
@@ -83,6 +89,13 @@ export default function ConversationsPage() {
   useEffect(() => {
     if (companies && companies.length && !companyId) setCompanyId(companies[0].id);
   }, [companies, companyId]);
+
+  useEffect(() => {
+    const openId = searchParams.get("open");
+    if (!openId || !conversations || conversations.length === 0 || selected) return;
+    const target = conversations.find((c) => c.id === openId);
+    if (target) void openConversation(target);
+  }, [searchParams, conversations, selected]);
 
   async function loadSearchData(requests: PartRequest[]) {
     const active = activePartRequest(requests);
@@ -131,6 +144,14 @@ export default function ConversationsPage() {
     }
   }
 
+  async function loadShadow() {
+    try {
+      setShadow(await api.get<ShadowList>("/manager/shadow?limit=50"));
+    } catch {
+      setShadow(null);
+    }
+  }
+
   async function loadPartRequests(conversationId: string) {
     try {
       const requests = await api.get<PartRequest[]>(`/part_requests?conversation_id=${conversationId}`);
@@ -160,13 +181,18 @@ export default function ConversationsPage() {
     ? orders.find((o) => o.quote_id === salesDraft.quote_id) ?? null
     : null;
 
-  async function sendForApproval(message: string) {
+  const activeRequest = activePartRequest(partRequests);
+  const currentComparison: ShadowComparison | null = shadow
+    ? shadow.items.find((c) => c.part_request_id === activeRequest?.id) ?? null
+    : null;
+
+  async function sendForApproval(message: string, approveNow = false) {
     if (!salesDraft || salesBusy) return;
     setSalesBusy(true);
     try {
       const result = await api.post<QuoteSendResult>(
         `/quotes/${salesDraft.quote_id}/send`,
-        { message },
+        { message, approve_now: approveNow },
       );
       await loadPartRequests(selected!.id);
     } finally {
@@ -241,6 +267,7 @@ export default function ConversationsPage() {
     const detail = await api.get<ConversationDetail>(`/conversations/${id}`);
     setSelected(detail);
     await loadPartRequests(id);
+    void loadShadow();
   }
 
   async function openConversation(c: Conversation) {
@@ -256,6 +283,7 @@ export default function ConversationsPage() {
         const detail = await api.get<ConversationDetail>(`/conversations/${selected.id}`);
         setSelected(detail);
         await loadPartRequests(selected.id);
+        void loadShadow();
       } catch {
         // ignore transient errors
       }
@@ -479,11 +507,22 @@ export default function ConversationsPage() {
                   order={currentOrder}
                   busy={salesBusy}
                   onSend={sendForApproval}
+                  onSendNow={(m) => sendForApproval(m, true)}
                   onApprove={approveQuote}
                   onReject={rejectQuote}
                   onAccept={acceptQuote}
                   onConvert={convertQuote}
                 />
+                {activeRequest ? (
+                  <ShadowPanel
+                    partRequestId={activeRequest.id}
+                    comparison={currentComparison}
+                    onSubmitted={() => {
+                      void loadShadow();
+                      if (selected) void loadPartRequests(selected.id);
+                    }}
+                  />
+                ) : null}
               </div>
 
               <div className="flex-1 space-y-2 overflow-y-auto px-5 py-4">

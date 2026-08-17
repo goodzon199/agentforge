@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core import permissions
@@ -17,7 +18,6 @@ from app.models import (
     ApprovalRequest,
     Company,
     Conversation,
-    ConversationMessage,
     Quote,
     SupplierOffer,
 )
@@ -53,14 +53,14 @@ class GuardBlockedError(Exception):
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _is_expired(expires_at: datetime | None) -> bool:
     if expires_at is None:
         return False
     if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
+        expires_at = expires_at.replace(tzinfo=UTC)
     return _now() > expires_at
 
 
@@ -171,6 +171,14 @@ class SalesService:
 
         key = f"send_quote:{quote.id}:{quote.conversation_id}"
         existing = self._find_action_by_key(quote.company_id, key)
+        if existing is not None and existing.status == AgentActionStatus.failed:
+            # A corrected retry after a guard-blocked attempt: the old failed
+            # row holds the UNIQUE key slot (legacy 3.8.x wrote guard-block
+            # audits under the send key), so retire it before the real send —
+            # INSERTing again would raise UniqueViolation (500 on live).
+            self.db.delete(existing)
+            self.db.flush()
+            existing = None
         if existing is not None:
             if existing.status == AgentActionStatus.executed:
                 return {
@@ -192,48 +200,28 @@ class SalesService:
         guard = quote_guard.check(final, quote.items or [], self._purchase_prices(quote))
         if not guard.passed:
             # Blocked sends are audited as failed actions (never trust the AI).
-            self._record_action(
-                company_id=quote.company_id,
-                action_type="send_customer_message",
-                agent_id=agent_id,
-                target_type="quote",
-                target_id=str(quote.id),
-                input_data={"quote_id": str(quote.id), "message": final},
-                result_data={"guard": guard.to_dict()},
-                status=AgentActionStatus.failed,
-                idempotency_key=key,
-            )
+            # The audit insert uses a key that can never collide with the real
+            # send (``key`` must stay free for a corrected retry): a second
+            # blocked attempt of the same message is idempotent instead of
+            # raising a UniqueViolation (post-3.8.3a UNIQUE idempotency key).
+            audit_key = f"{key}:guard_blocked"
+            recorded = self._find_action_by_key(quote.company_id, audit_key)
+            if recorded is None:
+                self._record_action(
+                    company_id=quote.company_id,
+                    action_type="send_customer_message",
+                    agent_id=agent_id,
+                    target_type="quote",
+                    target_id=str(quote.id),
+                    input_data={"quote_id": str(quote.id), "message": final},
+                    result_data={"guard": guard.to_dict()},
+                    status=AgentActionStatus.failed,
+                    idempotency_key=audit_key,
+                )
             self._record_hallucination(quote, final, agent_id)
             self.db.commit()
             raise GuardBlockedError(guard.to_dict())
 
-        action = self._record_action(
-            company_id=quote.company_id,
-            action_type="send_customer_message",
-            agent_id=agent_id,
-            target_type="quote",
-            target_id=str(quote.id),
-            input_data={"quote_id": str(quote.id), "message": final},
-            status=AgentActionStatus.pending,
-            idempotency_key=key,
-        )
-        from app.tracing.tracer import record_span, resolve_trace_for_conversation
-
-        trace_id = resolve_trace_for_conversation(
-            self.db,
-            quote.conversation_id,
-            company_id=quote.company_id,
-            source="sales_send",
-        )
-        if trace_id is not None:
-            record_span(
-                self.db,
-                "action",
-                f"Отправка предложения клиенту (квота {quote.id})",
-                trace_id=trace_id,
-                status="ok",
-                metadata={"quote_id": str(quote.id)},
-            )
         decision = permissions.evaluate(
             agent=agent_id,
             company=self.db.get(Company, quote.company_id),
@@ -242,17 +230,24 @@ class SalesService:
             context={"quote_id": str(quote.id), "conversation_id": str(quote.conversation_id)},
         )
         if decision.requires_approval:
-            if decision.risk_level == "MEDIUM" and self._policy_auto_send(quote):
-                # Company Policy Engine: the business rule says this quote may
-                # go out on its own (auto_send_quote or amount threshold).
-                self._perform_send(quote, final, action=action)
-                self.db.commit()
-                return {
-                    "status": QuoteStatus.sent.value,
-                    "message_sent": True,
-                    "already_executed": False,
-                    "quote_id": str(quote.id),
-                }
+            if decision.risk_level == "MEDIUM":
+                # Sprint 3.8.3 — Controlled Auto, hardened in 3.8.3a:
+                # decision -> latest quote reload -> QuoteGuard re-check ->
+                # policy re-check -> ATOMIC send (unique idempotency key).
+                auto_result = self._auto_send_safely(quote, final, agent_id)
+                if auto_result is not None:
+                    self.db.commit()
+                    return auto_result
+            action = self._record_action(
+                company_id=quote.company_id,
+                action_type="send_customer_message",
+                agent_id=agent_id,
+                target_type="quote",
+                target_id=str(quote.id),
+                input_data={"quote_id": str(quote.id), "message": final},
+                status=AgentActionStatus.pending,
+                idempotency_key=key,
+            )
             approval = self._create_approval(quote, action, final, agent_id)
             quote.status = QuoteStatus.pending_approval
 
@@ -269,6 +264,16 @@ class SalesService:
             }
 
         # Company policy allows this action (LOW): the agent sends on its own.
+        action = self._record_action(
+            company_id=quote.company_id,
+            action_type="send_customer_message",
+            agent_id=agent_id,
+            target_type="quote",
+            target_id=str(quote.id),
+            input_data={"quote_id": str(quote.id), "message": final},
+            status=AgentActionStatus.executed,
+            idempotency_key=key,
+        )
         self._perform_send(quote, final, action=action)
         self.db.commit()
         return {
@@ -278,20 +283,126 @@ class SalesService:
             "quote_id": str(quote.id),
         }
 
-    def _policy_auto_send(self, quote: Quote) -> bool:
-        """Whether the Company Policy Engine lets this quote out on its own."""
-        from app.services.company_policy_service import CompanyPolicyService
+    def _auto_send_safely(
+        self,
+        quote: Quote,
+        final: str,
+        agent_id: uuid.UUID | None,
+    ) -> dict[str, Any] | None:
+        """Controlled Auto (3.8.3a): re-verify then atomically auto-send.
 
-        cps = CompanyPolicyService(self.db)
-        sales = cps.policy(quote.company_id, "sales")
-        if sales.get("auto_send_quote") is True:
-            return True
-        approval = cps.policy(quote.company_id, "approval")
-        threshold = approval.get("auto_approve_quote_amount")
-        if threshold is None:
-            return False
-        total = _dec(quote.quote_total)
-        return total > 0 and total <= Decimal(str(threshold))
+        Returns the send result when THIS worker won the race, ``None`` when
+        the quote must go to a manager instead (unsafe / another worker owns
+        the version). Never sends twice: the versioned idempotency key is
+        UNIQUE in the DB, so a second worker's insert aborts.
+        """
+        fresh = self._reload_quote(quote)
+        if fresh.status == QuoteStatus.sent:
+            # Already delivered (e.g. a retry) — never send again.
+            return {
+                "already_executed": True,
+                "message_sent": True,
+                "status": "sent",
+                "quote_id": str(fresh.id),
+            }
+        guard = quote_guard.check(final, fresh.items or [], self._purchase_prices(fresh))
+        if not guard.passed:
+            # The final text is no longer valid against the latest quote —
+            # route to a manager instead of sending stale facts.
+            return None
+        auto = self._auto_send_decision(fresh)
+        if not auto["auto"]:
+            return None
+
+        key = f"auto_send_quote:{fresh.id}:{fresh.version}"
+        raced = self._find_action_by_key(fresh.company_id, key)
+        if raced is not None:
+            if raced.status == AgentActionStatus.executed:
+                return {
+                    "already_executed": True,
+                    "message_sent": True,
+                    "status": "sent",
+                    "quote_id": str(fresh.id),
+                }
+            # Another worker holds a pending auto-send for this exact version:
+            # do not double-send, do not create a stale approval — report in-flight.
+            return {
+                "approval_id": None,
+                "status": ApprovalStatus.pending.value,
+                "message_sent": False,
+                "already_executed": False,
+                "quote_id": str(fresh.id),
+                "auto_in_flight": True,
+            }
+        try:
+            action = self._record_action(
+                company_id=fresh.company_id,
+                action_type="send_customer_message",
+                agent_id=agent_id,
+                target_type="quote",
+                target_id=str(fresh.id),
+                input_data={"quote_id": str(fresh.id), "message": final},
+                status=AgentActionStatus.pending,
+                idempotency_key=key,
+            )
+            self.db.flush()
+        except IntegrityError:
+            # Unique key violated: another worker inserted the same version.
+            self.db.rollback()
+            raced = self._find_action_by_key(fresh.company_id, key)
+            if raced is not None and raced.status == AgentActionStatus.executed:
+                return {
+                    "already_executed": True,
+                    "message_sent": True,
+                    "status": "sent",
+                    "quote_id": str(fresh.id),
+                }
+            return {
+                "approval_id": None,
+                "status": ApprovalStatus.pending.value,
+                "message_sent": False,
+                "already_executed": False,
+                "quote_id": str(fresh.id),
+                "auto_in_flight": True,
+            }
+
+        self._perform_send(fresh, final, action=action, auto_send=auto)
+        self._record_auto_audit(fresh, auto)
+        fresh.version += 1
+        return {
+            "status": QuoteStatus.sent.value,
+            "message_sent": True,
+            "already_executed": False,
+            "quote_id": str(fresh.id),
+            "auto_sent": True,
+            "auto_reasons": auto["reasons"],
+        }
+
+    def _reload_quote(self, quote: Quote) -> Quote:
+        """Fetch the LATEST row for a quote inside the current transaction."""
+        self.db.expire(quote)
+        fresh = self.db.get(Quote, quote.id)
+        if fresh is None:
+            raise ConflictError("Квота не найдена.")
+        return fresh
+
+    def _record_auto_audit(self, quote: Quote, auto: dict[str, Any]) -> None:
+        """Persist the full auto-send decision snapshot on the quote (3.8.3a)."""
+        from app.services.auto_send_service import AutoSendService
+
+        quote.auto_send_decision = AutoSendService(self.db).snapshot(auto)
+        quote.auto_sent = True
+        quote.auto_sent_at = _now()
+
+    def _auto_send_decision(self, quote: Quote) -> dict[str, Any]:
+        """Controlled Auto (sprint 3.8.3): only auto-send when it is safe.
+
+        The decision is recorded on the send action so the pilot analytics can
+        show how many quotes went out without a human and why.
+        """
+        from app.services.auto_send_service import AutoSendService
+
+        return AutoSendService(self.db).decision(quote)
 
     def approve(self, approval_id: uuid.UUID, user) -> dict[str, Any]:
         approval = self._get_approval_or_raise(approval_id, user)
@@ -308,9 +419,30 @@ class SalesService:
                 f"Запрос уже обработан (статус {approval.status.value})."
             )
 
+        # Operational notifications (Sprint 4.6) — e.g. "Ваш заказ прибыл" —
+        # have no quote; they dispatch to the order notification executor.
+        if (approval.payload or {}).get("kind") == "order_notification":
+            return self._approve_order_notification(approval, user)
+
         quote = self.db.get(Quote, approval.quote_id) if approval.quote_id else None
         if quote is None:
             raise ConflictError("Квота не найдена.")
+
+        # 3.8.3a: a quote already delivered by auto-send must never be re-sent
+        # through the approval path (double-send guard).
+        if quote.status == QuoteStatus.sent:
+            approval.status = ApprovalStatus.approved
+            approval.approved_by_user_id = user.id
+            approval.approved_at = _now()
+            self.db.commit()
+            return {
+                "status": ApprovalStatus.approved.value,
+                "message_sent": True,
+                "message_id": None,
+                "approval_id": str(approval.id),
+                "already_approved": False,
+                "already_sent": True,
+            }
 
         final = (approval.payload or {}).get("message") or quote.manager_edited or quote.ai_draft
         if not final:
@@ -341,6 +473,86 @@ class SalesService:
             "already_approved": False,
         }
 
+    def _approve_order_notification(
+        self,
+        approval: ApprovalRequest,
+        user,
+    ) -> dict[str, Any]:
+        """Deliver an operational order notification ("Ваш заказ прибыл").
+
+        Approval payload: ``{kind: "order_notification", order_id, message}``.
+        The message is written into the customer's conversation and the action
+        is marked executed. No quote/feedback involved.
+        """
+        from app.models import Order
+
+        payload = approval.payload or {}
+        order = (
+            self.db.get(Order, uuid.UUID(str(payload["order_id"])))
+            if payload.get("order_id")
+            else None
+        )
+        if order is None:
+            raise ConflictError("Заказ уведомления не найден.")
+        conversation = (
+            self.db.get(Conversation, order.conversation_id)
+            if order.conversation_id
+            else None
+        )
+        if conversation is None:
+            raise ConflictError("Диалог клиента не найден.")
+
+        approval.status = ApprovalStatus.approved
+        approval.approved_by_user_id = user.id
+        approval.approved_at = _now()
+
+        action = self.db.get(AgentAction, approval.action_id) if approval.action_id else None
+
+        message = payload.get("message") or (
+            f"Ваш заказ {order.order_number} прибыл в автосервис и готов к выдаче."
+        )
+        msg, _ = ConversationService(self.db).add_message(
+            conversation,
+            content=message,
+            sender_type="agent",
+            sender_id=None,
+            structured_data={
+                "kind": "order_notification",
+                "order_id": str(order.id),
+                "approval_id": str(approval.id),
+                "action_id": str(action.id) if action else None,
+            },
+        )
+        if action is not None:
+            action.status = AgentActionStatus.executed
+            action.executed_at = _now()
+            action.result_data = {
+                "message_id": str(msg.id),
+                "order_id": str(order.id),
+                "approval_id": str(approval.id),
+            }
+
+        AuditService(self.db).record(
+            action="approval.approve",
+            entity_type="approval",
+            entity_id=str(approval.id),
+            company_id=approval.company_id,
+            user_id=user.id,
+            detail={
+                "kind": "order_notification",
+                "order_id": str(order.id),
+                "order_number": order.order_number,
+            },
+        )
+        self.db.commit()
+        return {
+            "status": ApprovalStatus.approved.value,
+            "message_sent": True,
+            "message_id": str(msg.id),
+            "approval_id": str(approval.id),
+            "already_approved": False,
+        }
+
     def _perform_send(
         self,
         quote: Quote,
@@ -348,6 +560,7 @@ class SalesService:
         *,
         approval: ApprovalRequest | None = None,
         action: AgentAction | None = None,
+        auto_send: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Actually deliver the sales message to the customer.
 
@@ -388,6 +601,7 @@ class SalesService:
             action.result_data = {
                 "message_id": str(msg.id),
                 "approval_id": str(approval.id) if approval else None,
+                **({"auto_send": auto_send} if auto_send is not None else {}),
             }
 
         return {"message_id": str(msg.id), "approval_id": str(approval.id) if approval else None}
@@ -425,7 +639,10 @@ class SalesService:
         if action is not None:
             action.status = AgentActionStatus.cancelled
 
-        self._record_feedback(quote, approval, action, final_output=None, rejected=True)
+        # Operational notifications (order arrival) carry no quote — skipping
+        # the sales feedback record keeps their lifecycle purely operational.
+        if (approval.payload or {}).get("kind") != "order_notification":
+            self._record_feedback(quote, approval, action, final_output=None, rejected=True)
         AuditService(self.db).record(
             action="approval.reject",
             entity_type="approval",
@@ -713,6 +930,24 @@ class SalesService:
                 prompt_version=quote.prompt_version if quote is not None else None,
             )
         )
+        # Fitment Engine (sprint 4.0): a manager approving the AI's pick
+        # unchanged confirms the fitment — feed the learning moat.
+        if (
+            quote is not None
+            and feedback_type == AgentFeedbackType.approved_unchanged
+            and quote.part_request_id is not None
+        ):
+            from app.models import PartRequest
+            from app.services.fitment_service import FitmentService
+
+            pr = self.db.get(PartRequest, quote.part_request_id)
+            if pr is not None:
+                FitmentService(self.db).record_manager_evidence(
+                    pr,
+                    source="manager_confirmation",
+                    confidence=0.95,
+                    detail={"approval_id": str(approval.id)},
+                )
 
     def _record_hallucination(
         self,

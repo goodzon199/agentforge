@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -43,7 +43,7 @@ class Trace(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # Convenience metadata: what triggered the trace (e.g. "customer_message").
     source: Mapped[str] = mapped_column(String(40), nullable=False, default="customer_message")
 
-    spans: Mapped[list["Span"]] = relationship(
+    spans: Mapped[list[Span]] = relationship(
         "Span",
         back_populates="trace",
         cascade="all, delete-orphan",
@@ -51,7 +51,7 @@ class Trace(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         order_by="Span.started_at.asc()",
         foreign_keys="Span.trace_id",
     )
-    root_span: Mapped["Span | None"] = relationship(
+    root_span: Mapped[Span | None] = relationship(
         "Span", foreign_keys=[root_span_id], post_update=True
     )
 
@@ -103,7 +103,7 @@ class Span(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     trace: Mapped[Trace] = relationship(
         "Trace", back_populates="spans", foreign_keys=[trace_id]
     )
-    parent: Mapped["Span | None"] = relationship(
+    parent: Mapped[Span | None] = relationship(
         "Span",
         remote_side=lambda: [Span.id],
         backref="children",

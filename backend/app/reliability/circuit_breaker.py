@@ -4,6 +4,7 @@ import enum
 import threading
 import time
 import uuid
+from datetime import UTC
 from typing import Any
 
 from app.core.config import settings
@@ -241,9 +242,7 @@ class CircuitBreaker:
     def record_failure(self) -> None:
         with self._lock:
             self._failures += 1
-            if self._state is BreakerState.closed and self._failures >= self.failure_threshold:
-                self._open()
-            elif self._state is BreakerState.half_open:
+            if (self._state is BreakerState.closed and self._failures >= self.failure_threshold) or self._state is BreakerState.half_open:
                 self._open()
 
     def _open(self) -> None:
@@ -517,17 +516,17 @@ def _redis_enabled() -> bool:
 def _iso(timestamp: float | None) -> str | None:
     if timestamp is None:
         return None
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    return datetime.fromtimestamp(timestamp, timezone.utc).isoformat()
+    return datetime.fromtimestamp(timestamp, UTC).isoformat()
 
 
 def _iso_ms(timestamp_ms: Any) -> str | None:
     if not timestamp_ms:
         return None
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    return datetime.fromtimestamp(int(timestamp_ms) / 1000, timezone.utc).isoformat()
+    return datetime.fromtimestamp(int(timestamp_ms) / 1000, UTC).isoformat()
 
 
 def _wall_clock() -> float:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,7 +16,7 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     """Cosine similarity between two equal-length vectors."""
     if not a or not b or len(a) != len(b):
         return 0.0
-    dot = sum(x * y for x, y in zip(a, b))
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
     na = sum(x * x for x in a) ** 0.5
     nb = sum(y * y for y in b) ** 0.5
     if na == 0.0 or nb == 0.0:
@@ -58,7 +58,7 @@ class MemoryService:
             kind=kind,
             content=content,
             meta=meta or {},
-            expires_at=datetime.utcnow()
+            expires_at=datetime.now(UTC)
             + timedelta(days=ttl_days or self.SHORT_MEMORY_TTL_DAYS),
         )
         self.db.add(entry)
@@ -103,7 +103,7 @@ class MemoryService:
     # --- Reads ------------------------------------------------------------
 
     def short_memories(self, agent_id: uuid.UUID, limit: int = 20) -> list[ShortMemory]:
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         stmt = (
             select(ShortMemory)
             .where(ShortMemory.agent_id == agent_id)

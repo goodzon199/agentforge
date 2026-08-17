@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -14,7 +14,7 @@ from app.core.redis import redis_client
 from app.llm.client import llm_client
 from app.memory.service import MemoryService
 from app.models import User
-from app.schemas.common import InfoResponse, MessageResponse
+from app.schemas.common import InfoResponse
 from app.schemas.settings import MemoryContextRead, MemoryWrite, ToolRead
 from app.services.agent_service import AgentService
 from app.tools.registry import tool_registry
@@ -30,7 +30,7 @@ def platform_info():
         environment=settings.environment,
         llm_available=llm_client.available,
         redis_available=redis_client.available,
-        generated_at=datetime.now(timezone.utc),
+        generated_at=datetime.now(UTC),
     )
 
 

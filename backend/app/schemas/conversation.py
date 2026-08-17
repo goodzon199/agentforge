@@ -8,7 +8,6 @@ from pydantic import BaseModel, Field
 
 from app.schemas.common import ORMModel
 
-
 # --- Customer --------------------------------------------------------------
 
 class CustomerCreate(BaseModel):
@@ -55,7 +54,7 @@ class ConversationRead(ORMModel):
 
 
 class ConversationDetail(ConversationRead):
-    messages: list["MessageRead"] = []
+    messages: list[MessageRead] = Field(default_factory=list)
 
 
 # --- Message ---------------------------------------------------------------

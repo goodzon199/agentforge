@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
@@ -182,7 +182,7 @@ def test_approve_guard_recheck_blocks_bad_payload(client, db_session):
         status=ApprovalStatus.pending,
         payload={"quote_id": quote_id, "message": "TRW GDB2119 — 6 100 ₽"},
         risk_level=ApprovalRiskLevel.medium,
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
     db_session.add(approval)
     db_session.commit()
@@ -208,7 +208,7 @@ def test_expired_approval_cannot_be_approved(client, db_session):
         status=ApprovalStatus.pending,
         payload={"quote_id": quote_id, "message": "текст"},
         risk_level=ApprovalRiskLevel.medium,
-        expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+        expires_at=datetime.now(UTC) - timedelta(minutes=1),
     )
     db_session.add(approval)
     db_session.commit()
@@ -232,7 +232,7 @@ def test_approval_other_company_forbidden(client, db_session):
         status=ApprovalStatus.pending,
         payload={},
         risk_level=ApprovalRiskLevel.medium,
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
     )
     db_session.add(approval)
     db_session.commit()

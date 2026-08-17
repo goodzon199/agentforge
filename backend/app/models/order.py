@@ -3,14 +3,13 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
 
 from sqlalchemy import JSON, DateTime, Enum, ForeignKey, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
 from app.models.base import TimestampMixin, UUIDPrimaryKeyMixin
-from app.models.enums import OrderStatus
+from app.models.enums import OrderStatus, TrackingStatus
 
 
 class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -45,6 +44,12 @@ class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Enum(OrderStatus, name="order_status"),
         nullable=False,
         default=OrderStatus.new,
+    )
+    # Supplier-side aggregate lifecycle (sprint 4.6): accepted → assembling →
+    # shipped → arrived → handed_over. Recomputed from the fulfillment lines'
+    # supplier_status; "pending" until the purchase is approved and placed.
+    tracking_status: Mapped[str] = mapped_column(
+        String(24), nullable=False, default=TrackingStatus.pending.value
     )
     currency: Mapped[str] = mapped_column(String(8), nullable=False, default="RUB")
     order_total: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)

@@ -39,11 +39,14 @@ class PilotAnalytics(BaseModel):
     revenue: str
     gross_profit: str
     avg_response_seconds: float | None = None
+    p95_response_seconds: float | None = None
     pipeline: list[PipelineStageStats]
     suppliers: dict[str, Any]
     llm: dict[str, Any]
     task_timeouts: int
     reliability: dict[str, Any]
+    assist: dict[str, Any] | None = None
+    sprint39: dict[str, Any] | None = None
 
 
 @router.get("/pilot", response_model=PilotAnalytics)

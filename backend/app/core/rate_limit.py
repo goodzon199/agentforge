@@ -68,6 +68,18 @@ class RateLimiter:
                 return count
             return 0
 
+    def retry_after_seconds(self, key: str, window_seconds: int) -> int:
+        """Seconds until the current window resets (>= 1)."""
+
+        if self._redis.available:
+            ttl = self._redis.ttl(key)
+            if ttl is not None:
+                return max(1, ttl)
+        with self._lock:
+            start, _ = self._local.get(key, (0.0, 0))
+            remaining = window_seconds - int(time.monotonic() - start)
+            return max(1, remaining)
+
     def clear(self, key: str) -> None:
         if self._redis.available:
             self._redis.delete(key)

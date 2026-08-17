@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any
 
 import pytest
 from sqlalchemy import select
 
 from app.core.policies import DEFAULT_POLICIES, merge_policy
-from app.models import Company, Supplier, SupplierOffer
+from app.models import Company, Supplier
 from app.services.company_policy_service import CompanyPolicyService
 from app.services.parts_search_service import PartsSearchService
 from app.services.pricing_service import PricingService
-
 
 # --- Unit: merge -------------------------------------------------------------
 
@@ -74,7 +72,7 @@ def test_security_policy_mirrors_to_settings_permissions(db_session):
 
 def test_update_non_dict_payload_raises(db_session):
     company_id = db_session.scalars(select(Company)).first().id
-    with pytest.raises(ValueError):
+    with pytest.raises(TypeError):
         CompanyPolicyService(db_session).update(company_id, pricing="oops")  # type: ignore[arg-type]
 
 
@@ -112,6 +110,7 @@ def _make_part_request(db_session, *, quantity=1):
         article="",
         quantity=quantity,
         status=PRS.ready_for_search,
+        structured_data={"intent_confidence": 0.9},
     )
     db_session.add(pr)
     db_session.commit()
@@ -270,9 +269,13 @@ def _priced_quote(client, db_session):
 
 
 def test_sales_policy_auto_send_quote(client, db_session):
+    # 3.8.3a AND logic: auto_send_quote on + amount ceiling configured.
     client.put(
         "/api/v1/company-policies",
-        json={"sales": {"auto_send_quote": True}},
+        json={
+            "sales": {"auto_send_quote": True},
+            "approval": {"auto_approve_quote_amount": 10000},
+        },
     )
     quote_id = _priced_quote(client, db_session)
     resp = client.post(f"/api/v1/quotes/{quote_id}/send", json={})
@@ -283,10 +286,26 @@ def test_sales_policy_auto_send_quote(client, db_session):
     assert body["approval_id"] is None
 
 
+def test_sales_policy_auto_send_quote_needs_both_flags(client, db_session):
+    """auto_send_quote alone (no amount ceiling) must NOT auto-send."""
+    client.put(
+        "/api/v1/company-policies",
+        json={"sales": {"auto_send_quote": True}},
+    )
+    quote_id = _priced_quote(client, db_session)
+    resp = client.post(f"/api/v1/quotes/{quote_id}/send", json={})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["message_sent"] is False
+    assert resp.json()["status"] == "pending"
+
+
 def test_approval_policy_amount_threshold_below_sends(client, db_session):
     client.put(
         "/api/v1/company-policies",
-        json={"approval": {"auto_approve_quote_amount": 10000}},
+        json={
+            "sales": {"auto_send_quote": True},
+            "approval": {"auto_approve_quote_amount": 10000},
+        },
     )
     quote_id = _priced_quote(client, db_session)  # best total 7930 ≤ 10000
     resp = client.post(f"/api/v1/quotes/{quote_id}/send", json={})
@@ -298,7 +317,10 @@ def test_approval_policy_amount_threshold_below_sends(client, db_session):
 def test_approval_policy_amount_threshold_above_requires_approval(client, db_session):
     client.put(
         "/api/v1/company-policies",
-        json={"approval": {"auto_approve_quote_amount": 5000}},
+        json={
+            "sales": {"auto_send_quote": True},
+            "approval": {"auto_approve_quote_amount": 5000},
+        },
     )
     quote_id = _priced_quote(client, db_session)  # best total 7930 > 5000
     resp = client.post(f"/api/v1/quotes/{quote_id}/send", json={})

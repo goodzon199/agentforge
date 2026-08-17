@@ -45,6 +45,9 @@ def _offer_read(offer) -> SupplierOfferRead:
         customer_price=offer.customer_price,
         total_price=offer.total_price,
         margin_percent=offer.margin_percent,
+        rank=offer.rank,
+        rank_score=offer.rank_score,
+        rank_reasons=offer.rank_reasons,
         created_at=offer.created_at,
     )
 
@@ -120,7 +123,7 @@ def list_part_requests(
         try:
             status_enum = PartRequestStatus(status)
         except ValueError:
-            raise HTTPException(status_code=422, detail="Некорректный статус")
+            raise HTTPException(status_code=422, detail="Некорректный статус") from None
     scope = company_scope(user)
     if scope is not None:
         company_id = scope
@@ -162,7 +165,7 @@ def update_part_request(
         try:
             updates["status"] = PartRequestStatus(updates["status"])
         except ValueError:
-            raise HTTPException(status_code=422, detail="Некорректный статус")
+            raise HTTPException(status_code=422, detail="Некорректный статус") from None
     service.update(part_request, **updates)
     service.db.commit()
     service.db.refresh(part_request)
@@ -179,7 +182,7 @@ def list_offers(
     part_service: PartRequestService = Depends(get_part_request_service),
     service: PartsSearchService = Depends(get_parts_search_service),
 ):
-    part_request = _load_part_request(part_request_id, part_service, user)
+    _load_part_request(part_request_id, part_service, user)
     return [_offer_read(o) for o in service.list_offers(part_request_id)]
 
 
@@ -204,7 +207,7 @@ def list_search_runs(
     part_service: PartRequestService = Depends(get_part_request_service),
     service: PartsSearchService = Depends(get_parts_search_service),
 ):
-    part_request = _load_part_request(part_request_id, part_service, user)
+    _load_part_request(part_request_id, part_service, user)
     return [_run_read(r) for r in service.list_runs(part_request_id)]
 
 
@@ -218,7 +221,7 @@ def run_pricing(
     part_service: PartRequestService = Depends(get_part_request_service),
     pricing_service: PricingService = Depends(get_pricing_service),
 ):
-    part_request = _load_part_request(part_request_id, part_service, user)
+    _load_part_request(part_request_id, part_service, user)
     summary = pricing_service.process(part_request_id, triggered_by="user")
     return PartQuoteRead(**summary)
 
@@ -230,6 +233,6 @@ def get_quote(
     part_service: PartRequestService = Depends(get_part_request_service),
     pricing_service: PricingService = Depends(get_pricing_service),
 ):
-    part_request = _load_part_request(part_request_id, part_service, user)
+    _load_part_request(part_request_id, part_service, user)
     summary = pricing_service.summary(part_request_id)
     return PartQuoteRead(**summary)

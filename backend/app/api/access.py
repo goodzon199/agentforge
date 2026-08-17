@@ -26,3 +26,24 @@ def company_scope(user) -> uuid.UUID | None:
     if user is None:
         return None
     return user.company_id
+
+
+# Roles in descending privilege: owner > admin > manager > viewer.
+# ``viewer`` is read-only for business mutations; owner/admin/manager may write.
+_WRITE_ROLES = frozenset({"owner", "admin", "manager"})
+
+
+def is_writer(user) -> bool:
+    """True for owner/admin/manager (and for unscoped/system users)."""
+    if user is None:
+        return True
+    return user.role in _WRITE_ROLES
+
+
+def ensure_writer(user) -> None:
+    """Block ``viewer`` from mutating business resources (403)."""
+    if not is_writer(user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Роль viewer — только чтение: изменить заказ/цитату запрещено.",
+        )

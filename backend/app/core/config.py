@@ -145,9 +145,11 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 60 * 24 * 7  # 7 дней
     jwt_issuer: str = "agentforge"
 
-    # Demo admin (создаётся при первом сидинге)
+    # Bootstrap admin (создаётся при первом сидинге ТОЛЬКО если задан пароль).
+    # Пароль обязателен в production (fail-fast при старте) и не должен быть
+    # well-known значением вроде admin123. Пустая строка = админ не создаётся.
     seed_admin_email: str = "admin@agentos.local"
-    seed_admin_password: str = "admin123"
+    seed_admin_password: str = ""
     seed_admin_name: str = "Администратор"
 
     # --- Security / production hardening (sprint 3.7) ----------------------
@@ -172,6 +174,33 @@ class Settings(BaseSettings):
     chat_rate_per_minute: int = 30
     chat_rate_per_day: int = 300
     chat_rate_window_seconds: int = 60
+
+    # Business rate limits (sprint 3.7.1): per-user quotas applied to the
+    # authenticated API, keyed by company_id:user_id. Categories are derived
+    # from the request path/method (see category_for in core.business_rate_limit).
+    # PUBLIC is keyed by client IP and guards the login + public chat endpoints.
+    # Each entry: {"limit": calls, "window": seconds}. Values are overridable
+    # via env (JSON, e.g. BUSINESS_RATE_LIMITS={"ai":{"limit":10,...}}).
+    business_rate_limits: dict[str, dict] = {
+        "read": {"limit": 300, "window": 60},
+        "write": {"limit": 120, "window": 60},
+        "expensive": {"limit": 30, "window": 60},
+        "ai": {"limit": 20, "window": 60},
+        "public": {"limit": 120, "window": 60},
+    }
+
+    # Shadow Mode (sprint 3.8.1): how many shadow comparisons the pilot will
+    # accumulate before automatic shadow tracking stops (the first N real
+    # requests are measured against a human selection, then automation can be
+    # turned on deliberately).
+    shadow_mode_limit: int = 100
+
+    # Pilot 500 (sprint 3.9): the pilot is judged on its first N real requests.
+    pilot_target_requests: int = 500
+    # Estimated infra (GPU/DB/Rabbit/VM) cost attributed to a single request,
+    # RUB. Added to the measured LLM cost to report total cost/request. The
+    # LLM cost itself is computed from LLMUsage rows (tokens * price).
+    infra_cost_per_request_rub: float = 0.0
 
     @property
     def is_llm_available(self) -> bool:

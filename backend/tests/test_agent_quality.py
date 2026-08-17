@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -43,7 +43,7 @@ def _add_completed_task(db_session, *, agent_id, seconds_ago=5):
     from app.models import Task
     from app.models.enums import TaskPriority, TaskStatus
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     task = Task(
         company_id=_demo_company_id(db_session),
         agent_id=agent_id,

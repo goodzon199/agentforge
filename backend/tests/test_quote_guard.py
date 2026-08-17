@@ -95,6 +95,47 @@ def test_blocks_brand_without_article():
     assert any("бренд" in e.lower() for e in result.errors)
 
 
+def test_passes_numeric_article():
+    # Live suppliers (Avtokontinent) carry purely numeric articles like "6417":
+    # the guard must accept them as facts instead of blocking every retry.
+    items = [
+        {
+            "offer_id": "o3",
+            "brand": "MAPCO",
+            "article": "6417",
+            "part_name": "Тормозные колодки",
+            "sale_price": "2095.60",
+            "total_price": "2095.60",
+            "delivery_days": 5,
+            "quantity_available": 2,
+        }
+    ]
+    message = "MAPCO 6417 по цене 2095.60 руб., поставка 5 дн., в наличии 2 шт."
+    result = QuoteGuard().check(message, items, [])
+    assert result.passed is True, result.errors
+    assert "6417" in result.facts["articles"]
+
+
+def test_blocks_wrong_numeric_article():
+    items = [
+        {
+            "offer_id": "o3",
+            "brand": "MAPCO",
+            "article": "6417",
+            "part_name": "Тормозные колодки",
+            "sale_price": "2095.60",
+            "total_price": "2095.60",
+            "delivery_days": 5,
+            "quantity_available": 2,
+        }
+    ]
+    # A brand without any known article is still ambiguous — no new fact.
+    message = "MAPCO 9999 — 2 095 ₽, 5 дн., в наличии 2 шт."
+    result = QuoteGuard().check(message, items, [])
+    assert result.passed is False
+    assert any("бренд" in e.lower() or "9999" in e for e in result.errors)
+
+
 def test_passes_manager_edited_message():
     message = "Здравствуйте! Рекомендую TRW GDB2119 за 7 930 ₽, срок 1 день, в наличии 3 шт."
     result = _check(message)

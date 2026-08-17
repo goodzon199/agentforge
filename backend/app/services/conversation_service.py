@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -61,7 +61,7 @@ class ConversationService:
         conversation.mode = mode
         if mode == ConversationMode.human_active:
             conversation.assigned_user_id = user_id
-        conversation.updated_at = datetime.now(timezone.utc)
+        conversation.updated_at = datetime.now(UTC)
 
         company = (
             self.db.get(Company, conversation.company_id)
@@ -78,7 +78,7 @@ class ConversationService:
                 result_data={"mode": mode.value},
                 risk_level=permissions.risk_for(action_type, "conversation", company),
                 status=AgentActionStatus.executed,
-                executed_at=datetime.now(timezone.utc),
+                executed_at=datetime.now(UTC),
             )
         )
         return conversation
@@ -165,7 +165,7 @@ class ConversationService:
         )
         self.db.add(message)
         conversation.status = "open"
-        conversation.updated_at = datetime.now(timezone.utc)
+        conversation.updated_at = datetime.now(UTC)
         self.db.flush()  # получить message.id
 
         # Auto-create a processing task for every incoming customer message —

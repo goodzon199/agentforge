@@ -7,12 +7,12 @@ from app.agents.system import SystemAgent
 
 __all__ = [
     "AgentOutput",
-    "BaseAgent",
-    "SystemAgent",
-    "EmailAgent",
-    "SearchAgent",
-    "IntakeAgent",
     "AgentRegistry",
+    "BaseAgent",
+    "EmailAgent",
+    "IntakeAgent",
+    "SearchAgent",
+    "SystemAgent",
     "agent_registry",
 ]
 

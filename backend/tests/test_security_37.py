@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC
 
 import pytest
 from sqlalchemy import select
@@ -58,9 +59,13 @@ def test_production_validation_blocks_weak_secret():
         settings.database_url,
         settings.debug,
         settings.db_auto_create,
+        settings.seed_admin_password,
+        settings.openai_api_key,
     )
     try:
         settings.environment = "production"
+        settings.seed_admin_password = "strong-production-pass-1"
+        settings.openai_api_key = "ollama"
         settings.jwt_secret = "too-short"
         with pytest.raises(RuntimeError, match="JWT_SECRET"):
             security.validate_production_settings()
@@ -89,6 +94,102 @@ def test_production_validation_blocks_weak_secret():
             settings.database_url,
             settings.debug,
             settings.db_auto_create,
+            settings.seed_admin_password,
+            settings.openai_api_key,
+        ) = saved
+
+
+def test_production_blocks_missing_or_weak_admin_password():
+    from app.core import security
+    from app.core.config import settings
+
+    saved = (
+        settings.environment,
+        settings.jwt_secret,
+        settings.database_url,
+        settings.debug,
+        settings.db_auto_create,
+        settings.seed_admin_password,
+        settings.openai_api_key,
+    )
+    try:
+        settings.environment = "production"
+        settings.jwt_secret = "x" * 64
+        settings.database_url = "postgresql://u:p@h/db"
+        settings.debug = False
+        settings.db_auto_create = False
+        settings.openai_api_key = "ollama"
+
+        settings.seed_admin_password = ""
+        with pytest.raises(RuntimeError, match="SEED_ADMIN_PASSWORD"):
+            security.validate_production_settings()
+
+        settings.seed_admin_password = "admin123"
+        with pytest.raises(RuntimeError, match="SEED_ADMIN_PASSWORD"):
+            security.validate_production_settings()
+
+        settings.seed_admin_password = "short"
+        with pytest.raises(RuntimeError, match="SEED_ADMIN_PASSWORD"):
+            security.validate_production_settings()
+
+        settings.seed_admin_password = "strong-production-pass-1"
+        security.validate_production_settings()
+    finally:
+        (
+            settings.environment,
+            settings.jwt_secret,
+            settings.database_url,
+            settings.debug,
+            settings.db_auto_create,
+            settings.seed_admin_password,
+            settings.openai_api_key,
+        ) = saved
+
+
+def test_production_blocks_wildcard_cors_and_missing_llm_key():
+    from app.core import security
+    from app.core.config import settings
+
+    saved = (
+        settings.environment,
+        settings.jwt_secret,
+        settings.database_url,
+        settings.debug,
+        settings.db_auto_create,
+        settings.seed_admin_password,
+        settings.cors_origins,
+        settings.openai_api_key,
+    )
+    try:
+        settings.environment = "production"
+        settings.jwt_secret = "x" * 64
+        settings.database_url = "postgresql://u:p@h/db"
+        settings.debug = False
+        settings.db_auto_create = False
+        settings.seed_admin_password = "strong-production-pass-1"
+        settings.openai_api_key = "ollama"
+
+        settings.cors_origins = "*"
+        with pytest.raises(RuntimeError, match="CORS_ORIGINS"):
+            security.validate_production_settings()
+
+        settings.cors_origins = "https://app.example.com"
+        settings.openai_api_key = ""
+        with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
+            security.validate_production_settings()
+
+        settings.openai_api_key = "ollama"
+        security.validate_production_settings()
+    finally:
+        (
+            settings.environment,
+            settings.jwt_secret,
+            settings.database_url,
+            settings.debug,
+            settings.db_auto_create,
+            settings.seed_admin_password,
+            settings.cors_origins,
+            settings.openai_api_key,
         ) = saved
 
 
@@ -96,8 +197,9 @@ def test_production_validation_blocks_weak_secret():
 
 
 def test_jwt_requires_type_claim(auth_client, db_session):
+    from datetime import datetime, timedelta
+
     import jwt as pyjwt
-    from datetime import datetime, timedelta, timezone
 
     from app.core.config import settings
     from app.models import User
@@ -106,7 +208,7 @@ def test_jwt_requires_type_claim(auth_client, db_session):
         select(User).where(User.email == settings.seed_admin_email)
     ).first()
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload = {
         "sub": str(admin.id),
         "iss": settings.jwt_issuer,
@@ -126,9 +228,11 @@ def test_jwt_requires_type_claim(auth_client, db_session):
 
 
 def test_me_with_type_access_token_ok(auth_client):
+    from tests.conftest import TEST_ADMIN_PASSWORD
+
     login = auth_client.post(
         "/api/v1/auth/login",
-        json={"email": "admin@agentos.local", "password": "admin123"},
+        json={"email": "admin@agentos.local", "password": TEST_ADMIN_PASSWORD},
     )
     assert login.status_code == 200
     headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
@@ -170,6 +274,11 @@ def test_login_throttle_lockout_and_reset(monkeypatch):
 
 def test_login_account_lock_429(auth_client):
     from app.core.rate_limit import LoginThrottle
+
+    # The per-IP budget lives in Redis (60s TTL) and is shared across runs and
+    # tests, so repeated pytest runs can exhaust it and make this test assert
+    # the wrong thing. Reset it so only the account lock is exercised.
+    LoginThrottle().limiter.clear("rate:login:ip:testclient")
 
     email = f"brute-{uuid.uuid4()}@example.com"
     for _ in range(5):
@@ -384,7 +493,76 @@ def test_audit_scoped_to_company(db_session):
     db_session.commit()
     assert mc.get(f"/api/v1/audit/{demo.id}").status_code == 403
 
-    from app.api.deps import get_current_user
     from app.main import app
 
     app.dependency_overrides.clear()
+
+
+def test_audit_records_request_metadata(client, db_session):
+    """Audit records capture ip / request_id / user_agent from the request."""
+    from app.models import Task
+    from app.models.enums import TaskPriority, TaskStatus
+
+    task = Task(
+        company_id=_demo_company_id(db_session),
+        title="replay-me",
+        objective="process_customer_message",
+        status=TaskStatus.completed,
+        priority=TaskPriority.normal,
+        input_data={},
+    )
+    db_session.add(task)
+    db_session.commit()
+
+    rid = uuid.uuid4().hex[:12]
+    client.post(
+        f"/api/v1/tasks/{task.id}/replay",
+        headers={"X-Request-ID": rid, "User-Agent": "audit-test-agent"},
+    )
+
+    data = client.get("/api/v1/audit").json()
+    replay = next(e for e in data["items"] if e["action"] == "task.replay")
+    assert replay["ip_address"] is not None
+    assert replay["request_id"] == rid
+    assert replay["user_agent"] == "audit-test-agent"
+
+    # The correlation id is echoed back on the response too.
+    resp = client.get(
+        "/api/v1/audit", headers={"X-Request-ID": "echo-me"}
+    )
+    assert resp.headers["x-request-id"] == "echo-me"
+
+
+def test_audit_cursor_pagination(client, db_session):
+    from app.services.audit_service import AuditService
+
+    svc = AuditService(db_session)
+    for i in range(3):
+        svc.record(
+            action="user.update",
+            entity_type="user",
+            entity_id=str(uuid.uuid4()),
+            company_id=_demo_company_id(db_session),
+            detail={"n": i},
+        )
+    db_session.commit()
+
+    page1 = client.get("/api/v1/audit?limit=2").json()
+    assert len(page1["items"]) == 2
+    assert page1["next_cursor"] is not None
+
+    page2 = client.get(
+        f"/api/v1/audit?limit=2&cursor={page1['next_cursor']}"
+    ).json()
+    assert len(page2["items"]) == 1
+    assert page2["next_cursor"] is None
+
+    ids1 = {e["id"] for e in page1["items"]}
+    ids2 = {e["id"] for e in page2["items"]}
+    assert not (ids1 & ids2)
+    assert ids1 | ids2 == {e["id"] for e in client.get("/api/v1/audit").json()["items"]}
+
+
+def test_audit_cursor_rejects_garbage(client):
+    resp = client.get("/api/v1/audit?cursor=!!!not-base64!!!")
+    assert resp.status_code == 400

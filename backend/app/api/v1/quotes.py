@@ -4,6 +4,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from app.api.access import ensure_writer
 from app.api.deps import get_current_user, get_order_service, get_sales_service
 from app.models import Quote, User
 from app.schemas.orders import OrderCreateResult, QuoteAcceptResult
@@ -22,7 +23,6 @@ from app.services.sales_service import (
     SalesService,
     company_allowed,
 )
-from app.services.quote_service import QuoteService
 
 router = APIRouter(prefix="/quotes", tags=["quotes"])
 
@@ -58,6 +58,7 @@ def prepare_sales_draft(
     service: SalesService = Depends(get_sales_service),
 ):
     quote = _load_quote(quote_id, service, user)
+    ensure_writer(user)
     if payload.message is not None:
         service.save_edited(quote, payload.message)
         service.db.commit()
@@ -77,17 +78,20 @@ def send_quote(
     service: SalesService = Depends(get_sales_service),
 ):
     quote = _load_quote(quote_id, service, user)
+    ensure_writer(user)
     try:
-        result = service.request_send(quote, payload.message, user)
+        result = service.request_send(
+            quote, payload.message, user, approve_now=payload.approve_now
+        )
     except ForbiddenError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ConflictError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except GuardBlockedError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"guard": exc.guard},
-        )
+        ) from exc
     return QuoteSendResult(**result)
 
 
@@ -99,10 +103,11 @@ def reject_quote(
     service: SalesService = Depends(get_sales_service),
 ):
     quote = _load_quote(quote_id, service, user)
+    ensure_writer(user)
     try:
         service.quote_reject(quote, user, payload.reason)
     except ForbiddenError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     return _draft(service, quote)
 
 
@@ -114,12 +119,13 @@ def accept_quote(
     orders: OrderService = Depends(get_order_service),
 ):
     quote = _load_quote(quote_id, service, user)
+    ensure_writer(user)
     try:
         result = orders.accept(quote, user)
     except ForbiddenError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ConflictError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return QuoteAcceptResult(**result)
 
 
@@ -131,10 +137,11 @@ def convert_quote_to_order(
     orders: OrderService = Depends(get_order_service),
 ):
     quote = _load_quote(quote_id, service, user)
+    ensure_writer(user)
     try:
         result = orders.create_from_quote(quote, user)
     except ForbiddenError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except ConflictError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return OrderCreateResult(**result)

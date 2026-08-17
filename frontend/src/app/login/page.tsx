@@ -20,7 +20,7 @@ export default function LoginPage() {
       const res = await api.post<LoginResponse>("/auth/login", { email, password });
       setToken(res.access_token);
       window.localStorage.setItem(USER_KEY, JSON.stringify(res.user));
-      router.replace("/");
+      router.replace(res.user.must_change_password ? "/change-password" : "/");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка входа");
@@ -64,10 +64,6 @@ export default function LoginPage() {
           </button>
           {error ? <div className="mt-3 text-xs text-rose-400">{error}</div> : null}
         </form>
-
-        <p className="mt-4 text-center text-xs text-slate-600">
-          Демо-доступ: admin@agentos.local / admin123
-        </p>
       </div>
     </div>
   );

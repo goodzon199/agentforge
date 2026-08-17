@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import uuid
-
 from sqlalchemy import select
 
 from app.schemas.intake import IntakeResult, PartInput, VehicleInput
@@ -66,6 +64,56 @@ def test_creates_part_request_collecting_data(db_session, make_conversation):
     part_request = db_session.scalars(select(PartRequest)).first()
     assert part_request.status.value == "collecting_data"
     assert part_request.source_message_id == message.id
+
+
+def test_intake_records_pilot_event_log_milestones(db_session, make_conversation):
+    from app.models import AuditEvent
+
+    _, _, conversation, message = make_conversation("Нужны колодки на BMW X5")
+    _process(
+        db_session, conversation, message,
+        _result(vehicle=_veh(brand="BMW", model="X5"), part=_part("тормозные колодки")),
+    )
+
+    events = db_session.scalars(
+        select(AuditEvent).where(AuditEvent.company_id == conversation.company_id)
+    ).all()
+    actions = [e.action for e in events]
+    assert "customer_message_received" in actions
+    assert "part_request_created" in actions
+
+    received = next(e for e in events if e.action == "customer_message_received")
+    assert received.entity_type == "conversation_message"
+    assert received.entity_id == str(message.id)
+    assert received.detail["conversation_id"] == str(conversation.id)
+
+    created = next(e for e in events if e.action == "part_request_created")
+    assert created.entity_type == "part_request"
+
+
+def test_intake_continuation_logs_part_request_updated(db_session, make_conversation):
+    from app.models import AuditEvent
+
+    _, _, conversation, m1 = make_conversation("Нужен радиатор на Camry")
+    _process(
+        db_session, conversation, m1,
+        _result(vehicle=_veh(brand="Toyota", model="Camry"), part=_part("радиатор")),
+    )
+
+    m2 = _message(db_session, conversation, "2018 год, двигатель 2.5")
+    _process(
+        db_session, conversation, m2,
+        _result(vehicle=_veh(year=2018, engine="2.5"), part=None),
+    )
+
+    actions = [
+        e.action
+        for e in db_session.scalars(
+            select(AuditEvent).where(AuditEvent.action.in_(["part_request_created", "part_request_updated"]))
+        ).all()
+    ]
+    assert "part_request_created" in actions
+    assert "part_request_updated" in actions
 
 
 def test_continuation_updates_single_part_request(db_session, make_conversation):

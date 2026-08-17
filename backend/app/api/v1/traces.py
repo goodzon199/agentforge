@@ -10,7 +10,7 @@ from app.api.access import company_scope, ensure_company
 from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.models import Span, Trace, User
-from app.schemas.trace import SpanNode, SpanRead, TraceDetail, TraceSummary, TraceTree
+from app.schemas.trace import SpanNode, SpanRead, TraceSummary, TraceTree
 
 router = APIRouter(prefix="/traces", tags=["traces"])
 

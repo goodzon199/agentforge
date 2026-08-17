@@ -29,6 +29,7 @@ type Props = {
   order: Order | null;
   busy: boolean;
   onSend: (message: string) => void;
+  onSendNow: (message: string) => void;
   onApprove: (approvalId: string) => void;
   onReject: (approvalId: string) => void;
   onAccept: () => void;
@@ -41,6 +42,7 @@ export function QuoteSalesPanel({
   order,
   busy,
   onSend,
+  onSendNow,
   onApprove,
   onReject,
   onAccept,
@@ -140,9 +142,21 @@ export function QuoteSalesPanel({
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
         {canSend ? (
-          <button className="btn-primary" disabled={busy} onClick={() => onSend(text)}>
-            Отправить на согласование
-          </button>
+          <>
+            <button
+              className="btn-primary"
+              disabled={busy}
+              title={isManager ? "Отправить клиенту без отдельного подтверждения" : undefined}
+              onClick={() => (isManager ? onSendNow(text) : onSend(text))}
+            >
+              {isManager ? "Отправить клиенту" : "Отправить на согласование"}
+            </button>
+            {isManager ? (
+              <button className="btn-ghost" disabled={busy} onClick={() => onSend(text)}>
+                Отправить на согласование
+              </button>
+            ) : null}
+          </>
         ) : null}
         {canApprove ? (
           <button

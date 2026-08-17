@@ -4,8 +4,9 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.api.deps import get_conversation_service
+from app.api.deps import check_public_business_rate, get_conversation_service
 from app.core.config import settings
+from app.core.emergency import emergency_switch
 from app.core.rate_limit import RateLimiter
 from app.schemas.chat import (
     PublicChatMessageIn,
@@ -36,12 +37,22 @@ def _message_read(message) -> PublicChatMessageRead:
     )
 
 
+def _require_active() -> None:
+    if emergency_switch.is_engaged():
+        raise HTTPException(
+            status_code=503,
+            detail="Пилотная эксплуатация временно приостановлена. Попробуйте позже.",
+        )
+
+
 @router.post("/start", response_model=PublicChatStarted)
 def start_chat(
     payload: PublicChatStart,
     request: Request,
     conversation_service: ConversationService = Depends(get_conversation_service),
+    _: None = Depends(check_public_business_rate),
 ):
+    _require_active()
     client_ip = request.client.host if request.client else "unknown"
     bucket = f"{payload.client_key or 'anon'}:{client_ip}"
     if not _limiter.hit(
@@ -61,7 +72,7 @@ def start_chat(
             client_key=payload.client_key,
         )
     except ChatError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     conversation_service.db.commit()
     return PublicChatStarted(
         conversation_id=conversation.id,
@@ -80,7 +91,9 @@ def send_public_message(
     payload: PublicChatMessageIn,
     request: Request,
     conversation_service: ConversationService = Depends(get_conversation_service),
+    _: None = Depends(check_public_business_rate),
 ):
+    _require_active()
     client_ip = request.client.host if request.client else "unknown"
     bucket = f"{getattr(payload, 'client_key', None) or 'anon'}:{client_ip}"
     if not _limiter.hit(
@@ -108,7 +121,7 @@ def send_public_message(
     try:
         message, task_id = service.send_message(conversation, payload.content)
     except ChatError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     return PublicChatSent(message=_message_read(message), task_id=task_id)
 
 
@@ -124,7 +137,7 @@ def list_public_messages(
     try:
         messages = service.list_messages(conversation)
     except ChatError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     return PublicChatMessages(
         conversation_id=conversation.id,
         mode=conversation.mode.value,

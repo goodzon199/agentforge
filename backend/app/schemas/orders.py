@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.common import ORMModel
 from app.schemas.sales import QuoteItemRead
@@ -20,9 +19,10 @@ class OrderRead(ORMModel):
 
     order_number: str
     status: str
+    tracking_status: str = "pending"
     currency: str = "RUB"
     order_total: str | None = None
-    items: list[QuoteItemRead] = []
+    items: list[QuoteItemRead] = Field(default_factory=list)
     created_by_user_id: uuid.UUID | None = None
     confirmed_at: datetime | None = None
     created_at: datetime

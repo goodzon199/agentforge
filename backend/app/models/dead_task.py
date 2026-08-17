@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -42,5 +42,5 @@ class DeadTask(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("tasks.id", ondelete="SET NULL"), index=True, nullable=True
     )
 
-    task: Mapped["Task"] = relationship("Task", foreign_keys=[task_id])
-    replayed: Mapped["Task | None"] = relationship("Task", foreign_keys=[replayed_task_id])
+    task: Mapped[Task] = relationship("Task", foreign_keys=[task_id])
+    replayed: Mapped[Task | None] = relationship("Task", foreign_keys=[replayed_task_id])

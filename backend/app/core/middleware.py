@@ -102,7 +102,12 @@ class RequestLoggingMiddleware:
             await self.app(scope, receive, send)
             return
 
-        request_id = uuid.uuid4().hex[:12]
+        # Reuse the id the (outer) audit-context middleware assigned so the
+        # access log and audit journal share one correlation id.
+        from app.services.audit_context import get_audit_context
+
+        ctx = get_audit_context()
+        request_id = ctx.request_id if ctx else uuid.uuid4().hex[:12]
         start = time.perf_counter()
         status_code = 0
 
@@ -130,10 +135,57 @@ class RequestLoggingMiddleware:
             )
 
 
+class AuditContextMiddleware:
+    """Capture request metadata into the per-request audit context.
+
+    The outermost middleware: it assigns the correlation id (echoed back as
+    ``X-Request-ID`` and reused by the access log) and records the client IP
+    and user-agent so ``AuditService`` can attach them to every record — the
+    audit layer never touches FastAPI types.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        from app.services.audit_context import (
+            AuditContext,
+            reset_audit_context,
+            set_audit_context,
+        )
+
+        headers: dict[str, str] = {}
+        for name, value in scope.get("headers", []):
+            headers[name.decode("latin1").lower()] = value.decode("latin1")
+        request_id = headers.get("x-request-id") or uuid.uuid4().hex[:12]
+        client = scope.get("client")
+        ctx = AuditContext(
+            request_id=request_id,
+            ip_address=client[0] if client else None,
+            user_agent=headers.get("user-agent"),
+        )
+        token = set_audit_context(ctx)
+
+        async def send_wrapper(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                mheaders = MutableHeaders(scope=message)
+                mheaders.setdefault("X-Request-ID", request_id)
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        finally:
+            reset_audit_context(token)
+
+
 async def _plain_response(
     send: Send, status_code: int, detail: str
 ) -> None:
-    body = f'{{"detail":"{detail}"}}'.encode("utf-8")
+    body = f'{{"detail":"{detail}"}}'.encode()
     await send(
         {
             "type": "http.response.start",

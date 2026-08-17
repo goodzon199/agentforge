@@ -28,7 +28,7 @@ class Vehicle(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     body: Mapped[str] = mapped_column(String(80), nullable=False, default="")
     registration_number: Mapped[str] = mapped_column(String(20), nullable=False, default="")
 
-    customer: Mapped["Customer"] = relationship("Customer")
+    customer: Mapped[Customer] = relationship("Customer", back_populates="vehicles")
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Vehicle {self.brand} {self.model} vin={self.vin!r}>"

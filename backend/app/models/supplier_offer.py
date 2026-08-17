@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import uuid
 from decimal import Decimal
-from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String, text
+from sqlalchemy import JSON, Boolean, ForeignKey, Integer, Numeric, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -48,7 +47,12 @@ class SupplierOffer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     total_price: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     margin_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
 
-    supplier: Mapped["Supplier"] = relationship("Supplier", lazy="selectin")
+    # Stamped by the ranking engine (sprint 4.3). rank 1 = best composite offer.
+    rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    rank_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 4), nullable=True)
+    rank_reasons: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+
+    supplier: Mapped[Supplier] = relationship("Supplier", lazy="selectin")
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<SupplierOffer {self.brand} {self.article} price={self.purchase_price}>"

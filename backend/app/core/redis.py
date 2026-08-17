@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 from typing import Any
 
@@ -49,10 +50,8 @@ class RedisClient:
     def set_json(self, key: str, value: Any, ttl_seconds: int | None = None) -> None:
         if not self.available:
             return
-        try:
+        with contextlib.suppress(Exception):
             self._client.set(key, json.dumps(value, default=str), ex=ttl_seconds)  # type: ignore[union-attr]
-        except Exception:
-            pass
 
     def get_json(self, key: str) -> Any | None:
         if not self.available:
@@ -66,19 +65,25 @@ class RedisClient:
     def delete(self, key: str) -> None:
         if not self.available:
             return
-        try:
+        with contextlib.suppress(Exception):
             self._client.delete(key)  # type: ignore[union-attr]
+
+    def ttl(self, key: str) -> int | None:
+        """Seconds until ``key`` expires (None when missing / Redis down)."""
+        if not self.available:
+            return None
+        try:
+            ttl = self._client.ttl(key)  # type: ignore[union-attr]
+            return ttl if isinstance(ttl, int) and ttl > 0 else None
         except Exception:
-            pass
+            return None
 
     def push(self, key: str, value: Any) -> None:
         """Push a message onto a list (used as a lightweight task queue)."""
         if not self.available:
             return
-        try:
+        with contextlib.suppress(Exception):
             self._client.rpush(key, json.dumps(value, default=str))  # type: ignore[union-attr]
-        except Exception:
-            pass
 
     def pop(self, key: str, timeout: int = 1) -> Any | None:
         if not self.available:
@@ -88,6 +93,13 @@ class RedisClient:
             return json.loads(raw) if raw else None
         except Exception:
             return None
+
+    def push_raw(self, key: str, raw_value: str) -> None:
+        """Push an already-JSON-encoded string onto a list unchanged."""
+        if not self.available:
+            return
+        with contextlib.suppress(Exception):
+            self._client.rpush(key, raw_value)  # type: ignore[union-attr]
 
 
 redis_client = RedisClient(settings.redis_url, settings.redis_enabled)

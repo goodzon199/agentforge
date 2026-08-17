@@ -38,7 +38,7 @@ class SupplierSearchRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
-    attempts: Mapped[list["SupplierSearchAttempt"]] = relationship(
+    attempts: Mapped[list[SupplierSearchAttempt]] = relationship(
         "SupplierSearchAttempt",
         back_populates="run",
         lazy="selectin",
@@ -73,10 +73,10 @@ class SupplierSearchAttempt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
-    run: Mapped["SupplierSearchRun"] = relationship(
+    run: Mapped[SupplierSearchRun] = relationship(
         "SupplierSearchRun", back_populates="attempts"
     )
-    supplier: Mapped["Supplier"] = relationship("Supplier", lazy="selectin")
+    supplier: Mapped[Supplier] = relationship("Supplier", lazy="selectin")
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<SupplierSearchAttempt supplier={self.supplier_id} status={self.status.value}>"

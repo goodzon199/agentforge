@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, ROUND_UP, Decimal
 from typing import Any
 
@@ -10,12 +10,13 @@ from sqlalchemy.orm import Session
 
 from app.models import Company, PartRequest, Supplier, SupplierOffer, SupplierSearchRun
 from app.services.company_policy_service import CompanyPolicyService
+from app.services.offer_ranking_service import OfferRankingService
 
 _PRICING_KEY = "pricing"
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class PricingService:
@@ -106,6 +107,9 @@ class PricingService:
             priced.append((offer, unit, total))
 
         best = self._best(priced)
+        ranked = OfferRankingService(self.db).rank(part_request, [o for o, _, _ in priced])
+        if ranked:
+            best = ranked[0]
         summary = self._summary(
             part_request,
             run=run,
@@ -256,6 +260,10 @@ class PricingService:
         triggered_by: str = "",
     ) -> dict[str, Any]:
         status = "no_run" if run is None else ("priced" if priced else "no_offers")
+        ranked_offers = sorted(
+            (o for o, _, _ in priced if o.rank is not None),
+            key=lambda o: o.rank,
+        )
         return {
             "status": status,
             "part_request_id": str(part_request.id),
@@ -272,5 +280,20 @@ class PricingService:
             "best_part_name": best.part_name if best is not None else "",
             "best_unit_price": str(best.customer_price) if best is not None else None,
             "best_total_price": str(best.total_price) if best is not None else None,
+            "ranked": [
+                {
+                    "offer_id": str(o.id),
+                    "rank": o.rank,
+                    "score": float(o.rank_score) if o.rank_score is not None else None,
+                    "brand": o.brand,
+                    "article": o.article,
+                    "supplier_name": o.supplier.name if o.supplier else "",
+                    "unit_price": str(o.customer_price) if o.customer_price else None,
+                    "total_price": str(o.total_price) if o.total_price else None,
+                    "delivery_days": o.delivery_days,
+                    "reasons": o.rank_reasons or [],
+                }
+                for o in ranked_offers
+            ],
             "priced_at": _now().isoformat() if priced else None,
         }
