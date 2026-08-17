@@ -1,10 +1,10 @@
-from __future__ import annotations
-
 """Shared status/value enums (pure Python, no SQLAlchemy).
 
 Single source of truth for both services. ``app.models.enums`` re-exports
 these so existing code keeps working unchanged.
 """
+
+from __future__ import annotations
 
 import enum
 

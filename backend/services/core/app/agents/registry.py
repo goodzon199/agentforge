@@ -9,10 +9,19 @@ _AGENT_CLASSES: dict[str, type[BaseAgent]] = {
     "email": EmailAgent,
 }
 
-# Map SystemAgent handoff names to agent types/slugs (platform agents only).
+# Map SystemAgent handoff names to agent types/slugs. Domain agents are
+# recognized for routing but executed REMOTELY in the autoparts service over
+# the internal contract (sprint 5.0): core never imports their implementations.
 HANDOFF_TO_TYPE: dict[str, str] = {
     "EmailAgent": "email",
+    "SearchAgent": "search",
+    "IntakeAgent": "intake",
+    "PricingAgent": "pricing",
+    "SalesAgent": "sales",
 }
+
+# Agent types whose execution lives in the autoparts service.
+REMOTE_AGENT_TYPES = frozenset({"search", "intake", "pricing", "sales"})
 
 
 class AgentRegistry:
@@ -29,6 +38,10 @@ class AgentRegistry:
 
     def kinds(self) -> list[str]:
         return list(_AGENT_CLASSES.keys())
+
+    def is_remote(self, agent_type: str) -> bool:
+        """True when the agent executes in the autoparts service."""
+        return agent_type in REMOTE_AGENT_TYPES
 
 
 agent_registry = AgentRegistry()

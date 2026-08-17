@@ -1,11 +1,11 @@
-from __future__ import annotations
-
 """Inter-service event schemas.
 
 Dataclasses only (no pydantic/SQLAlchemy) so ``shared`` stays dependency-free
 and both services can import it in-process or over HTTP. The ``kind`` field is
 the routing key; handlers in autoparts-service subscribe per kind.
 """
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any

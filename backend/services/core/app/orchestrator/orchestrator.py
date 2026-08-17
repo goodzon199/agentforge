@@ -185,39 +185,63 @@ class Orchestrator:
             # Hand off to a specialized agent when SystemAgent determined one.
             handoff_type = agent_registry.resolve_handoff(decision.handoff_agent)
             if handoff_type:
-                target_record = self._resolve_agent_by_type(db, handoff_type)
-                if target_record is None:
-                    raise RuntimeError(
-                        f"Агент для {decision.handoff_agent} не найден в базе."
+                if agent_registry.is_remote(handoff_type):
+                    # Sprint 5.0: domain agents live in autoparts. Dispatch over
+                    # the internal contract; the task completes with the remote
+                    # output, attributed to the domain agent (resolved locally
+                    # by slug so the audit/task record stays consistent).
+                    target_record = self._resolve_agent_by_type(db, handoff_type)
+                    if target_record is None:
+                        raise RuntimeError(
+                            f"Агент для {decision.handoff_agent} не найден в базе."
+                        )
+                    self._add_event(
+                        db,
+                        task,
+                        source="orchestrator",
+                        message=(
+                            f"SystemAgent передал задачу агенту {target_record.name} "
+                            "(autoparts-service, internal contract)."
+                        ),
                     )
-                self._add_event(
-                    db,
-                    task,
-                    source="orchestrator",
-                    message=f"SystemAgent передал задачу агенту {target_record.name}.",
-                )
+                    output = self._dispatch_remote(
+                        db, task, handoff_type, target_record
+                    )
+                    final_agent = target_record
+                else:
+                    target_record = self._resolve_agent_by_type(db, handoff_type)
+                    if target_record is None:
+                        raise RuntimeError(
+                            f"Агент для {decision.handoff_agent} не найден в базе."
+                        )
+                    self._add_event(
+                        db,
+                        task,
+                        source="orchestrator",
+                        message=f"SystemAgent передал задачу агенту {target_record.name}.",
+                    )
 
-                target = agent_registry.get_class(handoff_type)(
-                    record=target_record,
-                    memory=MemoryService(db),
-                    tools=self.tools,
-                    llm=llm,
-                    db=db,
-                )
-                with trace(
-                    db,
-                    "agent",
-                    f"{target_record.name} ({getattr(target, 'kind', target.slug)})",
-                    task_id=task.id,
-                    agent_id=target_record.id,
-                    metadata={"kind": getattr(target, "kind", target.slug)},
-                ):
-                    output = target.execute(task.objective, task.input_data or {})
-                target.remember(
-                    f"Задача: {task.objective} -> {output.response}",
-                    kind="task_result",
-                )
-                final_agent = target_record
+                    target = agent_registry.get_class(handoff_type)(
+                        record=target_record,
+                        memory=MemoryService(db),
+                        tools=self.tools,
+                        llm=llm,
+                        db=db,
+                    )
+                    with trace(
+                        db,
+                        "agent",
+                        f"{target_record.name} ({getattr(target, 'kind', target.slug)})",
+                        task_id=task.id,
+                        agent_id=target_record.id,
+                        metadata={"kind": getattr(target, "kind", target.slug)},
+                    ):
+                        output = target.execute(task.objective, task.input_data or {})
+                    target.remember(
+                        f"Задача: {task.objective} -> {output.response}",
+                        kind="task_result",
+                    )
+                    final_agent = target_record
             else:
                 output = decision
                 final_agent = agent_record
@@ -340,6 +364,62 @@ class Orchestrator:
         """Resolve an agent record by its type slug convention (e.g. email -> email-agent)."""
         stmt = select(AgentRecord).where(AgentRecord.slug == f"{agent_type}-agent")
         return db.scalars(stmt).first()
+
+    def _dispatch_remote(
+        self,
+        db: Session,
+        task: Task,
+        agent_type: str,
+        agent_record: AgentRecord,
+    ):
+        """Dispatch a domain task to the autoparts service (sprint 5.0).
+
+        POST /internal/agents/execute with the task objective/input_data; the
+        domain service runs its own agent implementation and returns the
+        output. The internal client raises on transport/HTTP errors, which the
+        task pipeline classifies (transient retry or dead-letter).
+        """
+        from shared.internal import internal_post
+
+        from app.core.config import settings
+        from app.tracing.tracer import trace
+
+        try:
+            result = internal_post(
+                settings.autoparts_internal_url,
+                "/internal/agents/execute",
+                payload={
+                    "agent_type": agent_type,
+                    "objective": task.objective,
+                    "input_data": task.input_data or {},
+                },
+                timeout=settings.llm_read_timeout + 10.0,
+            )
+        except Exception as exc:  # pragma: no cover - network error path
+            logger.warning(
+                "Remote dispatch to autoparts failed for task %s: %s",
+                task.id,
+                exc,
+            )
+            raise
+
+        class _RemoteOutput:
+            def __init__(self, data: dict) -> None:
+                self.response = data.get("response", "")
+                self.data = data.get("data", {})
+                self.handoff_agent = data.get("handoff_agent")
+                self.routing_decision = data.get("routing_decision")
+
+        with trace(
+            db,
+            "agent",
+            f"{agent_record.name} ({agent_type}, remote)",
+            task_id=task.id,
+            agent_id=agent_record.id,
+            metadata={"kind": agent_type, "remote": True},
+        ):
+            pass
+        return _RemoteOutput(result)
 
     def _add_event(
         self,

@@ -55,6 +55,7 @@ extend-immutable-calls = [
 
 [tool.ruff.lint.per-file-ignores]
 "app/models/*.py" = ["F821"]
+"alembic/versions/*.py" = ["W291"]
 "tests/*.py" = ["RUF059"]
 "app/core/redis.py" = ["BLE001", "S110"]
 "app/core/rate_limit.py" = ["BLE001", "S110"]
