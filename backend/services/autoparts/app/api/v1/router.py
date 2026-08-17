@@ -8,6 +8,7 @@ from app.api.v1 import (
     conversations,
     fitment,
     garage,
+    hellopack,
     manager,
     orders,
     part_requests,
@@ -34,6 +35,7 @@ for module in (
     manager,
     fitment,
     garage,
+    hellopack,
 ):
     api_router.include_router(
         module.router,
