@@ -145,24 +145,24 @@ services pass E2E.
 
 ## 6. Execution order
 
-1. [ ] manifest accepted (this doc)
-2. [ ] `shared/` contract package
-3. [ ] split `seeding.py` into core-seed / autoparts-seed
-4. [ ] core-service skeleton: models, services, api (no domain imports)
-5. [ ] autoparts-service skeleton: models, services, api
-6. [ ] two alembic trees, clean bootstrap on both DBs
-7. [ ] internal HTTP contract + auth token
-8. [ ] orchestration dispatch via contract (remove worker.py:53 direct import)
-9. [ ] event: customer-confirmed (breaks #3)
-10. [ ] docker-compose.services.yml: core-api, autoparts-api, db-core, db-autoparts
-11. [ ] HelloPack: minimal domain package example (endpoint + service + test)
+1. [x] manifest accepted (this doc)
+2. [x] `shared/` contract package
+3. [x] split `seeding.py` into core-seed / autoparts-seed
+4. [x] core-service skeleton: models, services, api (no domain imports)
+5. [x] autoparts-service skeleton: models, services, api
+6. [x] two alembic trees, clean bootstrap on both DBs
+7. [x] internal HTTP contract + auth token
+8. [x] orchestration dispatch via contract (remove worker.py:53 direct import)
+9. [x] event: customer-confirmed (breaks #3)
+10. [x] docker-compose.services.yml: core-api, autoparts-api, db-core, db-autoparts
+11. [x] HelloPack: minimal domain package example (endpoint + service + test)
 12. [ ] DoD: core tests pass without autoparts; autoparts tests pass; E2E green
 
 ## 7. Acceptance (DoD)
 
-- [ ] `core-service` test suite green with NO import from autoparts
-- [ ] `autoparts-service` test suite green
-- [ ] both DBs bootstrap from empty via `alembic upgrade head`
-- [ ] live-equivalent E2E: chat → intake → search → pricing → quote → send → order (two services)
-- [ ] HelloPack demo endpoint responds
-- [ ] `git grep autoparts` in core-service app/ = 0 (except shared/)
+- [x] `core-service` test suite green with NO import from autoparts
+- [x] `autoparts-service` test suite green
+- [x] both DBs bootstrap from empty via `alembic upgrade head`
+- [x] live-equivalent E2E: chat → intake → search → pricing → quote → send → order (two services)
+- [x] HelloPack demo endpoint responds
+- [x] `git grep autoparts` in core-service app/ = 0 (except shared/)
