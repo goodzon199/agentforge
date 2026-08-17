@@ -1,0 +1,168 @@
+# Sprint 5.0 — Platform Extraction: Core ↔ AutoParts microservice split
+
+Status: DRAFT (branch `sprint-5-platform-extraction`; live stays on `main` v0.4.7)
+
+Goal: split the monolith into two deployable services with separate databases,
+moving ALL automotive-domain logic out of the platform core. Core must run and
+pass tests with zero knowledge of parts/quotes/orders.
+
+---
+
+## 1. Service boundaries
+
+### core-service (platform)
+Runs its own FastAPI app + `core-db`. Owns identity, workforce, task engine,
+dialogues, audit, analytics, quality, settings, tracing, memory.
+
+**Models (core-db):** base, enums, company, user, agent, agent_action,
+agent_feedback, task, dead_task, llm_usage, memory, knowledge_entries,
+conversation, conversation_message, audit_event, prompt_version, trace, customer.
+
+**Services:** agent_service, agent_quality_service, task_service, user_service,
+company_service, conversation_service, chat_service, audit_service,
+analytics_service (auto-parts metrics removed), prompt_service,
+company_policy_service, audit_context, shadow_service (shadow dashboard =
+platform feature comparing AI vs manager; keep in core).
+
+**Agents:** base, system, email, registry (platform agents only).
+
+**API:** auth, users, agents, tasks, conversations, audit, analytics, quality,
+settings, permissions, logs, ops, traces, dashboard, companies,
+company_policies, manager, chat.
+
+**Platform packages:** core/, llm/, memory/, tools/, tracing/, reliability/,
+orchestrator/ (task engine only, no domain handler imports).
+
+### autoparts-service (domain)
+Runs its own FastAPI app + `autoparts-db`. Owns the parts journey:
+request → search → pricing → quote → approval → order → supplier → tracking.
+
+**Models (autoparts-db):** part_request, supplier, supplier_offer,
+supplier_search, quote, order, fitment, vehicle, supplier_fulfillment,
+shadow_comparison, part_return, cross_reference, catalog_fitment,
+fitment_evidence.
+
+**Services:** part_request_service, parts_search_service, pricing_service,
+quote_service, sales_service, order_service, supplier_service,
+supplier_order_service, supplier_reliability_service, offer_ranking_service,
+fitment_service, garage_service, vin_decode, quote_guard, auto_send_service,
+intake_service, manager_dashboard_service (domain metrics).
+
+**Agents:** intake, search, pricing, sales.
+
+**API:** part_requests, suppliers, quotes, orders, supplier_orders, fitment,
+garage + internal-only endpoints (see §3).
+
+**Package:** suppliers/ (entire adapter layer).
+
+---
+
+## 2. Cross-cutting dependencies to BREAK (today: monolith)
+
+| # | Today (file:line) | Direction | After split |
+|---|-------------------|-----------|-------------|
+| 1 | `core/seeding.py:12,235,436,514` imports domain models/services | core→domain | split into `core-seed` + `autoparts-seed` |
+| 2 | `orchestrator/worker.py:53` imports `parts_search_service` | core→domain | orchestrator dispatches by task intent via internal HTTP/event |
+| 3 | `conversation_service.py:208` imports `order_service` (accept-on-confirm) | core→domain | core emits "customer-confirmed" event; autoparts consumes |
+| 4 | `analytics_service.py:366` imports `auto_send_service` | core→domain | move auto-send metrics into autoparts analytics endpoint |
+| 5 | `agents/registry.py` transitively pulls domain agents | core→domain | registry built per-service; orchestrator resolves handlers via contract |
+| 6 | `sales_service.py:70` imports `app.api.access` | domain→core | move `company_allowed` into a shared contract package |
+| 7 | `schemas/users.py` imports `user_service.ROLES` | schemas→services | move ROLES into core models/enums |
+| 8 | `quote_service.py:134` imports orchestrator | domain→core | use core task/client stub, not direct import |
+| 9 | `conversation_service` ↔ `order_service` circular (lazy import) | domain↔core | resolved by event contract |
+
+Shared contract package: `shared/` (pure Python, no SQLAlchemy models, no
+services): enums subset, id/role constants, event schemas, HTTP client for
+internal API. Both services depend on it.
+
+---
+
+## 3. Inter-service contract (internal HTTP, token-gated)
+
+Core → Autoparts:
+- `POST /internal/parts/search` (intent: search)
+- `POST /internal/parts/price`  (intent: pricing)
+- `POST /internal/quotes/prepare-draft` (intent: sales draft)
+- `POST /internal/quotes/send` (intent: sales send / approval)
+- `POST /internal/conversations/on-customer-reply` (intent: domain handling of a customer message)
+
+Autoparts → Core:
+- `GET /internal/company/{id}` (policy/company context)
+- `POST /internal/audit/event` (append audit)
+- `POST /internal/tasks/complete` (report handler completion)
+- `GET /internal/agent/{id}` (agent identity for domain work)
+
+Internal auth: shared `INTERNAL_API_TOKEN` (env), `X-Internal-Token` header,
+checked by middleware in both services. Public API never exposed internally.
+
+---
+
+## 4. Database split
+
+Two Postgres databases, two alembic trees:
+- `services/core/alembic` → core-db (tables in §1 Core)
+- `services/autoparts/alembic` → autoparts-db (tables in §1 AutoParts)
+
+No cross-db FK constraints. Cross-service references are UUID columns only
+(conversation_id, customer_id, order_id, quote_id, part_request_id) with no
+FK — integrity enforced at the service boundary + audit trail.
+
+Migration strategy: keep the existing single `alembic/versions/` tree frozen
+on `main` (v0.4.7). On this branch create two new alembic trees seeded from
+the current head schema split by table, so both new DBs bootstrap clean.
+
+---
+
+## 5. Directory layout
+
+```
+backend/
+  shared/                  # contract package (pure, no models/services)
+    pyproject.toml
+    shared/__init__.py
+    shared/events.py       # event schemas (dataclasses/pydantic)
+    shared/roles.py        # role/status constants
+    shared/internal.py     # HTTP client + token guard helpers
+  services/
+    core/
+      pyproject.toml, requirements.txt, Dockerfile
+      alembic/             # core-db migrations
+      app/                 # FastAPI app (moved platform code)
+      tests/
+    autoparts/
+      pyproject.toml, requirements.txt, Dockerfile
+      alembic/             # autoparts-db migrations
+      app/                 # FastAPI app (moved domain code)
+      tests/
+  docker-compose.services.yml   # core-api, autoparts-api, db-core, db-autoparts
+```
+
+`app/`, `alembic/` (old), `tests/` stay on `main` for v0.4.7; this branch
+builds the new layout alongside, then the old app is removed only when both
+services pass E2E.
+
+---
+
+## 6. Execution order
+
+1. [ ] manifest accepted (this doc)
+2. [ ] `shared/` contract package
+3. [ ] split `seeding.py` into core-seed / autoparts-seed
+4. [ ] core-service skeleton: models, services, api (no domain imports)
+5. [ ] autoparts-service skeleton: models, services, api
+6. [ ] two alembic trees, clean bootstrap on both DBs
+7. [ ] internal HTTP contract + auth token
+8. [ ] orchestration dispatch via contract (remove worker.py:53 direct import)
+9. [ ] event: customer-confirmed (breaks #3)
+10. [ ] docker-compose.services.yml: core-api, autoparts-api, db-core, db-autoparts
+11. [ ] HelloPack: minimal domain package example (endpoint + service + test)
+12. [ ] DoD: core tests pass without autoparts; autoparts tests pass; E2E green
+
+## 7. Acceptance (DoD)
+
+- [ ] `core-service` test suite green with NO import from autoparts
+- [ ] `autoparts-service` test suite green
+- [ ] both DBs bootstrap from empty via `alembic upgrade head`
+- [ ] live-equivalent E2E: chat → intake → search → pricing → quote → send → order (two services)
+- [ ] HelloPack demo endpoint responds
+- [ ] `git grep autoparts` in core-service app/ = 0 (except shared/)
