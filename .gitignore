@@ -33,6 +33,7 @@ Thumbs.db
 *.log
 backend/alembic/versions/*.pyc
 *.dump
+scripts/backups/
 backend/dbg_throttle.py
 backend/chk_email.py
 scripts/t2.txt
