@@ -225,3 +225,29 @@ def pack_migrate() -> dict[str, Any]:
         logger.exception("pack migrate failed")
         raise HTTPException(status_code=500, detail=f"migrate failed: {exc}") from exc
     return {"ok": True, "revision": revision}
+
+
+@router.get("/pack/workflows")
+def pack_workflows() -> dict[str, Any]:
+    """Expose this pack's workflow definitions to core (sprint 5.3).
+
+    Core's workflow runtime loads the declared business processes over the
+    internal contract and executes the DAG, dispatching agent nodes to the
+    pack that provides them.
+    """
+    import pathlib
+
+    from shared.workflow import WorkflowError, load_workflow
+
+    workflows_dir = pathlib.Path(__file__).resolve().parents[2] / "workflows"
+    if not workflows_dir.is_dir():
+        return {"workflows": []}
+    loaded: list[dict[str, Any]] = []
+    for file_path in sorted(workflows_dir.glob("*.yaml")):
+        try:
+            workflow = load_workflow(file_path)
+        except WorkflowError as exc:
+            logger.warning("skip workflow %s: %s", file_path.name, exc)
+            continue
+        loaded.append(workflow.model_dump(mode="json"))
+    return {"workflows": loaded}

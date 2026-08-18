@@ -200,3 +200,85 @@ required_core_version: ">=0.5.0"
 - `packs` table (core-db) stores only the contract: name/version/base_url/manifest/state
 - orchestrator `_pack_base_url_for()` routes a domain agent to the active pack that declares it
 - `traces.root_span_id` FK drift fixed (separate migration `7e95954f104a`)
+
+---
+
+## 9. Sprint 5.2 — Pack Lifecycle
+
+Full lifecycle so a new vertical is installable/configurable/mutable by core
+without manual DB work.
+
+### Pack model + config
+
+- `packs.config` JSON column (migration `4dd25de42969`) — per-pack operator config
+- state machine `_TRANSITIONS` + `_guard`: installed → configured → active ↔ disabled,
+  upgrade → upgrade_required, uninstall → removed (only from a stable state)
+
+### Operations
+
+- `configure` — write `config`, requires `installed` or `configured`
+- `upgrade` — POST `/internal/pack/migrate` (pack runs its own alembic `upgrade head`),
+  bumps version from the manifest, returns to `configured` (not auto-active)
+- `uninstall` — removes the pack row
+
+### Pack side
+
+- `app/core/pack_migrations.py` — `upgrade_to_head()`, `current_revision()`
+- `/internal/pack/migrate` (POST) — applies pack migrations, returns `{revision}`
+
+### API (manager-guarded)
+
+- `POST /api/v1/packs/{name}/configure`, `POST .../{name}/upgrade`, `DELETE .../{name}`
+
+---
+
+## 10. Sprint 5.3 — Declarative Workflow Runtime
+
+Packs ship ready business processes as YAML DAGs; core executes them without
+knowing the domain, dispatching agent nodes back over the internal contract.
+
+### Workflow SDK (`shared/workflow.py`)
+
+```yaml
+name: sales_pipeline
+version: 1.0.0
+start: intake
+nodes:
+  - {id: intake, type: agent, agent: intake, next: classify}
+  - {id: classify, type: condition,
+     expression: "context.get('requires_search', False)",
+     branches: {true: search, false: human}}
+  - {id: approval, type: human, message: "Согласуйте с клиентом"}
+  - {id: done, type: end}
+```
+
+- `Workflow`/`WorkflowNode`, NodeType = agent | condition | human | end
+- `parse_workflow` / `load_workflow` / `validate_workflow` (start reachability,
+  branch targets exist, agent nodes declare an agent)
+- `evaluate_condition` — safe AST evaluator: only dict.get(), comparisons, bool ops,
+  subscript/attribute access; calls beyond dict.get raise `ConditionError`
+
+### Pack side
+
+- `workflows/sales_pipeline.yaml` shipped in the pack
+- `GET /internal/pack/workflows` — serves all `workflows/*.yaml`
+
+### Core runtime (`services/workflow_service.py`)
+
+- `load_from_pack` / `load_named` — fetch + validate workflows over internal contract
+- `run()` walks the DAG:
+  - agent → `POST /internal/agents/execute` on the active pack that declares the agent;
+    returned `data` is folded (deep-copied) into the run context
+  - condition → `evaluate_condition` over the run context, follow `branches`
+  - human → record `AgentAction(action_type=workflow_human, pending,
+    requires_approval=True)`, pause the run (`awaiting_approval` + `paused_at`)
+  - end → terminal
+- cycle detection per run; unknown start/targets raise `WorkflowRuntimeError`
+- API (manager-guarded): `GET /api/v1/workflows/{pack}/workflows`,
+  `POST /api/v1/workflows/{pack}/{workflow}/run` (task_id required)
+
+### E2E verified (live, core:8011 / autoparts:8012)
+
+- `requires_search=false` → intake → classify → human/end
+- `requires_search=true` → intake → search → pricing → approval(human) →
+  awaiting_approval, `agent_actions` row recorded

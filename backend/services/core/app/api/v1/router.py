@@ -20,6 +20,7 @@ from app.api.v1 import (
     tasks,
     traces,
     users,
+    workflows,
 )
 
 api_router = APIRouter()
@@ -48,6 +49,7 @@ for module in (
     users,
     ops,
     packs,
+    workflows,
 ):
     api_router.include_router(
         module.router,

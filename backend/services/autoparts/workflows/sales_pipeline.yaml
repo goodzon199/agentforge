@@ -1,0 +1,51 @@
+name: sales_pipeline
+version: 1.0.0
+start: intake
+
+nodes:
+  - id: intake
+    type: agent
+    agent: intake
+    description: Разобрать входящее сообщение клиента, понять задачу и собрать контекст
+    next: classify
+
+  - id: classify
+    type: condition
+    description: Есть ли в запросе поиск конкретной запчасти
+    expression: "context.get('requires_search', False)"
+    branches:
+      "true": search
+      "false": human
+
+  - id: search
+    type: agent
+    agent: search
+    description: Найти запчасть по каталогам и поставщикам
+    next: pricing
+
+  - id: pricing
+    type: agent
+    agent: pricing
+    description: Посчитать цены, применить квоты и политику согласования
+    next: approval
+
+  - id: approval
+    type: human
+    message: Требуется согласование цены и предложения с менеджером
+    priority: normal
+    next: order
+
+  - id: order
+    type: agent
+    agent: order
+    description: Оформить заказ после согласования
+    next: done
+
+  - id: human
+    type: end
+    description: Нет задачи на поиск запчасти — перевели на менеджера
+    message: Запрос передан менеджеру (нет поиска запчасти)
+
+  - id: done
+    type: end
+    description: Заказ оформлен, процесс завершён
