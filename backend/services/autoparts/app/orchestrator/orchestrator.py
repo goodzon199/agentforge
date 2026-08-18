@@ -5,6 +5,7 @@ import time
 from datetime import UTC
 from typing import Any
 
+from shared.agents import run_agent
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -164,19 +165,25 @@ class Orchestrator:
             self._add_event(
                 db,
                 task,
-                source=f"agents.{system.slug}",
-                message=f"Агент {system.name} получил задачу.",
+                source=f"agents.{system.record_slug}",
+                message=f"Агент {system.record_name} получил задачу.",
             )
 
             with trace(
                 db,
                 "agent",
-                f"{system.name} ({system.slug})",
+                f"{system.record_name} ({system.record_slug})",
                 task_id=task.id,
                 agent_id=agent_record.id,
-                metadata={"kind": getattr(system, "kind", system.slug)},
+                metadata={"kind": getattr(system, "kind", system.record_slug)},
             ):
-                decision = system.execute(task.objective, task.input_data or {})
+                ctx = system.build_context(
+                    task.objective,
+                    task.input_data or {},
+                    task_id=task.id,
+                    company_id=task.company_id,
+                )
+                decision = run_agent(system, ctx)
             system.remember(
                 f"Задача: {task.objective} -> маршрут: {decision.routing_decision}",
                 kind="routing",
@@ -207,12 +214,18 @@ class Orchestrator:
                 with trace(
                     db,
                     "agent",
-                    f"{target_record.name} ({getattr(target, 'kind', target.slug)})",
+                    f"{target_record.name} ({getattr(target, 'kind', target.record_slug)})",
                     task_id=task.id,
                     agent_id=target_record.id,
-                    metadata={"kind": getattr(target, "kind", target.slug)},
+                    metadata={"kind": getattr(target, "kind", target.record_slug)},
                 ):
-                    output = target.execute(task.objective, task.input_data or {})
+                    ctx = target.build_context(
+                        task.objective,
+                        task.input_data or {},
+                        task_id=task.id,
+                        company_id=task.company_id,
+                    )
+                    output = run_agent(target, ctx)
                 target.remember(
                     f"Задача: {task.objective} -> {output.response}",
                     kind="task_result",

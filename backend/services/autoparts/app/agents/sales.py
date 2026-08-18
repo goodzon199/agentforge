@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+
+from shared.agents import AgentContext
 
 from app.agents.base import AgentOutput, BaseAgent
 from app.models import Quote
@@ -19,7 +20,8 @@ class SalesAgent(BaseAgent):
 
     kind = "sales"
 
-    def execute(self, objective: str, input_data: dict[str, Any]) -> AgentOutput:
+    def execute(self, ctx: AgentContext) -> AgentOutput:
+        input_data = ctx.input_data or {}
         raw_quote_id = input_data.get("quote_id")
         if not raw_quote_id:
             return AgentOutput(
@@ -44,7 +46,7 @@ class SalesAgent(BaseAgent):
                 },
             )
 
-        quote = self.db.get(Quote, quote_id) if self.db is not None else None
+        quote = ctx.db.get(Quote, quote_id) if ctx.db is not None else None
         if quote is None:
             return AgentOutput(
                 response="Квота не найдена.",
@@ -56,12 +58,12 @@ class SalesAgent(BaseAgent):
                 },
             )
 
-        result = SalesService(self.db).generate_draft(
+        result = SalesService(ctx.db).generate_draft(
             quote,
-            agent_record=self.record,
-            llm=self.llm,
+            agent_record=ctx.agent,
+            llm=ctx.llm,
         )
-        self.db.commit()
+        ctx.db.commit()
 
         message = result.get("message", "")
         guard = result.get("guard", {})

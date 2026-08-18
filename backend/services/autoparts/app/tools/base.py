@@ -1,39 +1,12 @@
+"""Pack tool layer built on the shared Tool SDK (sprint 5.4).
+
+``BaseTool`` / ``ToolResult`` / ``ToolRegistry`` are the shared SDK contracts.
+Autoparts only adds its own tool implementations and a traced ``run``.
+"""
+
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from typing import Any
+from shared.tools import Tool as BaseTool
+from shared.tools import ToolRegistry, ToolResult
 
-from pydantic import BaseModel, Field
-
-
-class ToolResult(BaseModel):
-    ok: bool = True
-    data: Any = None
-    error: str | None = None
-
-
-class BaseTool(ABC):
-    """Every tool is an isolated module. Agents only call `run()`.
-
-    A tool knows nothing about agents; it exposes a contract
-    (name, description, input schema) so the orchestrator and
-    agents can route to it generically.
-    """
-
-    name: str = "base"
-    description: str = ""
-    input_schema: dict[str, Any] = Field(default_factory=dict)
-    version: str = "1.0.0"
-
-    @abstractmethod
-    def run(self, **kwargs: Any) -> ToolResult:
-        """Execute the tool with validated keyword arguments."""
-        raise NotImplementedError
-
-    def describe(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "description": self.description,
-            "version": self.version,
-            "input_schema": self.input_schema,
-        }
+__all__ = ["BaseTool", "ToolRegistry", "ToolResult"]

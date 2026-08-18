@@ -282,3 +282,66 @@ nodes:
 - `requires_search=false` → intake → classify → human/end
 - `requires_search=true` → intake → search → pricing → approval(human) →
   awaiting_approval, `agent_actions` row recorded
+## 11. Sprint 5.4 — Agent/Tool SDK
+
+Платформа, когда разработчик пишет агента, не зная внутренностей Core или
+пака. Всё, что нужно знать — это `ctx` (AgentContext).
+
+```python
+from shared.agents import Agent, AgentContext, AgentOutput
+
+class LeadAgent(Agent):
+    name = "lead-agent"
+    permissions = ["crm.read", "crm.write"]
+
+    def execute(self, ctx: AgentContext) -> AgentOutput:
+        ctx.permissions.require("crm.read")
+        rows = ctx.tools.run("crm.search", query=ctx.input_data.get("q"))
+        ctx.memory.remember(f"searched {ctx.objective}")
+        return AgentOutput(response="done", data={"rows": rows.data})
+```
+
+### Shared SDK (`shared/agents.py`, `shared/tools.py`) — pure Python, pydantic only
+
+- `Agent` — kind/name/description/permissions/tools/model/temperature ClassVars,
+  abstract `execute(ctx)`; `describe()` для интроспекции
+- `AgentContext` — objective/input_data/agent/agent_id/company_id/task_id + 8 фасадов:
+  memory, tools, actions, permissions, approvals, trace, llm, events; `require_permission`
+- `AgentOutput` — response/data/routing_decision/handoff_agent
+- `AgentRegistry` — `register(kind)`/`get`/`require`/`kinds`/`describe_all`
+- `run_agent(agent, ctx)` — поддерживает sync и async `execute` (`asyncio.run` для coroutine)
+- `Tool` / `ToolResult` / `ToolRegistry` — декларативные инструменты пака
+
+### Pack side (autoparts) — facades поверх сервисов пака
+
+- `app/agents/context.py` — AgentMemory (remember/learn/recall/search/knowledge),
+  AgentTools, AgentActions (AgentAction rows), AgentPermissions (manifest.yaml +
+  record), AgentApprovals (pending approval_request), AgentTrace, AgentEvents
+- `app/agents/base.py` — `BaseAgent(SDKAgent)`: legacy-конструктор
+  `(record, memory, tools, llm, db)`, `build_context(objective, input_data, task_id, company_id)`
+  собирает AgentContext с фасадами, `run(ctx)` делегирует в `execute(ctx)`
+  (инстансные аксессоры `record_name`/`record_slug`/... не затеняют ClassVars SDK)
+- все 6 агентов пака (system/email/search/intake/pricing/sales) переведены на
+  контракт `execute(self, ctx)`
+- `app/agents/registry.py` — `AgentRegistry(SDKAgentRegistry)`, резолв по `kind`
+- `app/tools/{base,registry}.py` — PackToolRegistry на shared Tool SDK
+
+### Точки входа переведены на SDK
+
+- `POST /internal/agents/execute` — build_context + `run_agent`
+- orchestrator `_run_pipeline` — build_context + `run_agent` для system и target
+
+### Тесты
+
+- shared: `tests/test_agent_sdk.py` (6) — registry/describe, run с ctx, async,
+  noop-фасады, unknown kind, tool registry
+- autoparts: `tests/test_agent_sdk_integration.py` (7) — registry describe,
+  build_context wires facades, actions/approvals запись, permissions gate из
+  manifest, run_agent через SDK, deny unknown permission
+
+### Live E2E (core:8011 / autoparts:8012)
+
+- `/internal/agents/execute` system -> SearchAgent (SDK contract, rules engine)
+- workflow `sales_pipeline` `requires_search=false` — intake -> classify -> human/end
+- `requires_search=true` — intake -> search(SDK) -> pricing(SDK) -> approval(human,
+  awaiting_approval, AgentAction workflow_human pending recorded)

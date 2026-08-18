@@ -4,6 +4,8 @@ import json
 import re
 from typing import Any
 
+from shared.agents import AgentContext
+
 from app.agents.base import AgentOutput, BaseAgent
 from app.llm.types import LLMMessage
 
@@ -57,9 +59,10 @@ class SystemAgent(BaseAgent):
 
     kind = "system"
 
-    def execute(self, objective: str, input_data: dict[str, Any]) -> AgentOutput:
-        context = self.recall_context()
-        decision = self._route(objective, context)
+    def execute(self, ctx: AgentContext) -> AgentOutput:
+        objective = ctx.objective
+        context = ctx.memory.recall()
+        decision = self._route(ctx, objective, context)
 
         handoff = decision.get("needs_agent")
         if handoff:
@@ -85,7 +88,7 @@ class SystemAgent(BaseAgent):
 
     # --- Routing ----------------------------------------------------------
 
-    def _route(self, objective: str, context: dict[str, object]) -> dict[str, Any]:
+    def _route(self, ctx: AgentContext, objective: str, context: dict[str, object]) -> dict[str, Any]:
         # Internal pipeline commands are always deterministic.
         if objective.strip().lower() in _INTERNAL_OBJECTIVES:
             return self._route_deterministic(objective)
@@ -96,8 +99,8 @@ class SystemAgent(BaseAgent):
         if rule_hit.get("needs_agent"):
             return rule_hit
         # Only unrecognized external free text may consult the LLM.
-        if self.llm.available:
-            return self._route_with_llm(objective, context)
+        if ctx.llm.available:
+            return self._route_with_llm(ctx, objective, context)
         return rule_hit
 
     def _route_deterministic(self, objective: str) -> dict[str, Any]:
@@ -115,7 +118,7 @@ class SystemAgent(BaseAgent):
             "engine": "rules",
         }
 
-    def _route_with_llm(self, objective: str, context: dict[str, object]) -> dict[str, Any]:
+    def _route_with_llm(self, ctx: AgentContext, objective: str, context: dict[str, object]) -> dict[str, Any]:
         system_prompt = (
             "Ты — SystemAgent, диспетчер платформы цифровых сотрудников. "
             "Твоя задача — классифицировать входящую задачу и решить, какой "
@@ -133,13 +136,13 @@ class SystemAgent(BaseAgent):
             f"Память агента: {json.dumps(context, ensure_ascii=False)[:2000]}"
         )
         try:
-            result = self.llm.chat(
+            result = ctx.llm.chat(
                 messages=[
                     LLMMessage(role="system", content=system_prompt),
                     LLMMessage(role="user", content=user_prompt),
                 ],
-                model=self.record.model,
-                temperature=self.record.temperature,
+                model=ctx.agent.model,
+                temperature=ctx.agent.temperature,
                 max_tokens=300,
             )
         except Exception:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from shared.agents import AgentContext
 
 from app.agents.base import AgentOutput, BaseAgent
 from app.core.config import settings
@@ -28,15 +28,16 @@ class EmailAgent(BaseAgent):
 
     kind = "email"
 
-    def execute(self, objective: str, input_data: dict[str, Any]) -> AgentOutput:
+    def execute(self, ctx: AgentContext) -> AgentOutput:
+        input_data = ctx.input_data or {}
         to = (input_data.get("to") or "").strip() or settings.email_default_to
         subject = (
             (input_data.get("subject") or "").strip()
-            or f"Задача: {objective[:60]}"
+            or f"Задача: {ctx.objective[:60]}"
         )
-        body = (input_data.get("body") or "").strip() or objective
+        body = (input_data.get("body") or "").strip() or ctx.objective
 
-        result = self.tools.run("email", to=to, subject=subject, body=body)
+        result = ctx.tools.run("email", to=to, subject=subject, body=body)
 
         if not result.ok:
             kind = FailureKind.INTERNAL_ERROR

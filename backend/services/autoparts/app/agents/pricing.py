@@ -4,6 +4,8 @@ import uuid
 from decimal import Decimal
 from typing import Any
 
+from shared.agents import AgentContext
+
 from app.agents.base import AgentOutput, BaseAgent
 from app.models import PartRequest
 from app.services.pricing_service import PricingService
@@ -30,8 +32,8 @@ class PricingAgent(BaseAgent):
 
     kind = "pricing"
 
-    def execute(self, objective: str, input_data: dict[str, Any]) -> AgentOutput:
-        if self.db is None:
+    def execute(self, ctx: AgentContext) -> AgentOutput:
+        if ctx.db is None:
             return AgentOutput(
                 response="Расчёт цены недоступен без базы данных.",
                 data={"action": "pricing_parts_error", "reason": "db_missing"},
@@ -42,7 +44,7 @@ class PricingAgent(BaseAgent):
                 },
             )
 
-        raw_part_request_id = input_data.get("part_request_id")
+        raw_part_request_id = (ctx.input_data or {}).get("part_request_id")
         if not raw_part_request_id:
             return AgentOutput(
                 response="Не указана заявка для расчёта цены.",
@@ -59,7 +61,7 @@ class PricingAgent(BaseAgent):
 
         try:
             part_request_id = uuid.UUID(str(raw_part_request_id))
-            raw_run_id = input_data.get("run_id")
+            raw_run_id = (ctx.input_data or {}).get("run_id")
             run_id = uuid.UUID(str(raw_run_id)) if raw_run_id else None
         except (ValueError, TypeError):
             return AgentOutput(
@@ -72,7 +74,7 @@ class PricingAgent(BaseAgent):
                 },
             )
 
-        if self.db.get(PartRequest, part_request_id) is None:
+        if ctx.db.get(PartRequest, part_request_id) is None:
             return AgentOutput(
                 response="Заявка на запчасть не найдена.",
                 data={"action": "pricing_parts_error", "reason": "not_found"},
@@ -83,10 +85,10 @@ class PricingAgent(BaseAgent):
                 },
             )
 
-        summary = PricingService(self.db).process(
+        summary = PricingService(ctx.db).process(
             part_request_id, run_id=run_id, triggered_by="agent"
         )
-        self.db.commit()
+        ctx.db.commit()
 
         return AgentOutput(
             response=self._response(summary),

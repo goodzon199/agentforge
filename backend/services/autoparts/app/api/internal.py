@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from shared.agents import run_agent
 from shared.internal import require_internal_token
 from shared.pack import ManifestError, load_manifest
 from sqlalchemy.orm import Session
@@ -54,6 +55,8 @@ class AgentExecuteRequest(BaseModel):
     agent_type: str
     objective: str
     input_data: dict[str, Any] = {}
+    task_id: str | None = None
+    company_id: str | None = None
 
 
 def _get_or_404(db: Session, model, entity_id: str):
@@ -95,7 +98,13 @@ def agent_execute(payload: AgentExecuteRequest, db: Session = Depends(get_db)) -
         llm=llm_client,
         db=db,
     )
-    output = agent.execute(payload.objective, payload.input_data)
+    ctx = agent.build_context(
+        objective=payload.objective,
+        input_data=payload.input_data or {},
+        task_id=payload.task_id,
+        company_id=payload.company_id,
+    )
+    output = run_agent(agent, ctx)
     return {
         "response": output.response,
         "data": output.data,

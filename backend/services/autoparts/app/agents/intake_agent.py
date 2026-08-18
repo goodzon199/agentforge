@@ -6,6 +6,7 @@ import uuid
 from typing import Any
 
 from pydantic import ValidationError
+from shared.agents import AgentContext
 
 from app.agents.base import AgentOutput, BaseAgent
 from app.llm.types import LLMMessage
@@ -100,14 +101,15 @@ class IntakeAgent(BaseAgent):
 
     kind = "intake"
 
-    def execute(self, objective: str, input_data: dict[str, Any]) -> AgentOutput:
-        if self.db is None:
+    def execute(self, ctx: AgentContext) -> AgentOutput:
+        if ctx.db is None:
             return AgentOutput(
                 response="Обработка входящих сообщений недоступна без базы данных.",
                 data={"action": "error", "reason": "db_missing"},
                 routing_decision={"needs_agent": None, "reason": "db_missing", "engine": "intake"},
             )
 
+        input_data = ctx.input_data or {}
         conversation_id = input_data.get("conversation_id")
         message_id = input_data.get("message_id")
         if not conversation_id or not message_id:
@@ -117,8 +119,8 @@ class IntakeAgent(BaseAgent):
                 routing_decision={"needs_agent": None, "reason": "missing_ids", "engine": "intake"},
             )
 
-        conversation = self.db.get(Conversation, uuid.UUID(conversation_id))
-        message = self.db.get(ConversationMessage, uuid.UUID(message_id))
+        conversation = ctx.db.get(Conversation, uuid.UUID(conversation_id))
+        message = ctx.db.get(ConversationMessage, uuid.UUID(message_id))
         if conversation is None or message is None:
             return AgentOutput(
                 response="Сообщение или диалог не найден.",
@@ -126,14 +128,14 @@ class IntakeAgent(BaseAgent):
                 routing_decision={"needs_agent": None, "reason": "not_found", "engine": "intake"},
             )
 
-        result = self._parse(message.content, conversation=conversation)
-        service = IntakeService(self.db)
+        result = self._parse(message.content, conversation=conversation, ctx=ctx)
+        service = IntakeService(ctx.db)
         outcome = service.process(
-            conversation, message, result, agent_id=self.record.id
+            conversation, message, result, agent_id=ctx.agent_id
         )
-        self.db.commit()
+        ctx.db.commit()
 
-        self.remember(
+        ctx.memory.remember(
             f"Сообщение: {message.content[:80]} -> intent={result.intent}, "
             f"action={outcome.action}, ready={outcome.ready_for_search}",
             kind="intake",
@@ -166,12 +168,12 @@ class IntakeAgent(BaseAgent):
     # --- Parsing -----------------------------------------------------------
 
     def _parse(
-        self, text: str, conversation: Conversation | None = None
+        self, text: str, conversation: Conversation | None = None, *, ctx: AgentContext | None = None
     ) -> IntakeResult:
         """LLM first (validated), deterministic rules as the fallback."""
         garage = self._garage_hint(conversation)
-        if self.llm.available:
-            result = self._parse_with_llm(text, garage=garage)
+        if ctx is not None and ctx.llm.available:
+            result = self._parse_with_llm(text, garage=garage, ctx=ctx)
             if result is not None and result.confidence >= 0.5:
                 return result
         return self._parse_rules(text)
@@ -195,7 +197,7 @@ class IntakeAgent(BaseAgent):
             cars.append(label)
         return "Известные автомобили клиента (гараж): " + "; ".join(cars) + "."
 
-    def _parse_with_llm(self, text: str, *, garage: str = "") -> IntakeResult | None:
+    def _parse_with_llm(self, text: str, *, garage: str = "", ctx: AgentContext) -> IntakeResult | None:
         schema = (
             '{"intent": "part_search|order_status|general_question|complaint|unknown", '
             '"vehicle": {"vin": null, "brand": null, "model": null, '
@@ -229,13 +231,13 @@ class IntakeAgent(BaseAgent):
             if attempt == 2:
                 prompt += "\nПредыдущий ответ не прошёл валидацию. Верни корректный JSON строго по схеме."
             try:
-                result = self.llm.chat(
+                result = ctx.llm.chat(
                     messages=[
                         LLMMessage(role="system", content=system_prompt),
                         LLMMessage(role="user", content=prompt),
                     ],
-                    model=self.record.model,
-                    temperature=self.record.temperature,
+                    model=ctx.agent.model,
+                    temperature=ctx.agent.temperature,
                     max_tokens=300,
                 )
             except Exception:
