@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from shared.internal import require_internal_token
+from shared.pack import ManifestError, load_manifest
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -175,3 +176,35 @@ def quote_send(payload: QuoteSendRequest, db: Session = Depends(get_db)) -> dict
 @router.get("/health")
 def internal_health() -> dict[str, str]:
     return {"status": "ok", "service": "autoparts"}
+
+
+@router.get("/pack/manifest")
+def pack_manifest() -> dict[str, Any]:
+    """Expose this pack's manifest.yaml to core for discovery (sprint 5.1).
+
+    Core reads the manifest over the internal contract and registers the
+    pack; no pack-side registration is needed. The manifest lives at the
+    service root (``manifest.yaml``), also copied into the image at /app.
+    """
+    import pathlib
+
+    candidates = [
+        pathlib.Path(__file__).resolve().parents[2] / "manifest.yaml",
+        pathlib.Path("/app/manifest.yaml"),
+        pathlib.Path.cwd() / "manifest.yaml",
+    ]
+    for path in candidates:
+        if path.is_file():
+            try:
+                manifest = load_manifest(path)
+            except ManifestError as exc:
+                raise HTTPException(status_code=500, detail=str(exc)) from exc
+            return {
+                "name": manifest.name,
+                "version": manifest.version,
+                "manifest": manifest.model_dump(mode="json"),
+            }
+    raise HTTPException(
+        status_code=500,
+        detail="manifest.yaml не найден в пакете autoparts.",
+    )

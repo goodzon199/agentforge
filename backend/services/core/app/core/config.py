@@ -15,6 +15,13 @@ class Settings(BaseSettings):
     debug: bool = True
     log_level: str = "INFO"
 
+    # Pack SDK (sprint 5.1): the core version packs check against
+    # required_core_version, and the base URLs core discovers packs from.
+    # Each entry is a pack service's internal HTTP root (e.g.
+    # "http://autoparts-api:8010"); core fetches /internal/pack/manifest.
+    core_version: str = "0.5.0"
+    pack_base_urls: list[str] = []
+
     # Inter-service contract (sprint 5.0): core never imports the automotive
     # domain; autoparts-service is reached over its internal HTTP endpoint.
     autoparts_internal_url: str = "http://autoparts-api:8001"

@@ -11,6 +11,7 @@ from app.models.customer import Customer
 from app.models.dead_task import DeadTask
 from app.models.llm_usage import LLMUsage
 from app.models.memory import KnowledgeEntry, LongMemory, MemoryEntry, ShortMemory
+from app.models.pack import Pack
 from app.models.prompt_version import PromptVersion
 from app.models.task import Task, TaskEvent
 from app.models.trace import Span, Trace
@@ -33,6 +34,7 @@ __all__ = [
     "LLMUsage",
     "LongMemory",
     "MemoryEntry",
+    "Pack",
     "PromptVersion",
     "ShortMemory",
     "Span",

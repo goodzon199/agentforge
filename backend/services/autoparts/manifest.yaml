@@ -1,0 +1,35 @@
+name: autoparts
+version: 1.0.0
+display_name: AutoParts
+description: >-
+  Автомобильный домен AgentOS: поиск запчастей, цены, котировки, заказы и
+  поставщики. Первый вертикаль, подключённый через Pack SDK.
+
+agents:
+  - type: intake
+    display_name: IntakeAgent
+  - type: search
+    display_name: SearchAgent
+  - type: pricing
+    display_name: PricingAgent
+  - type: sales
+    display_name: SalesAgent
+  - type: order
+    display_name: OrderAgent
+
+permissions:
+  - customer.read
+  - conversation.write
+  - supplier.search
+  - quote.create
+  - order.create
+
+workflows:
+  - name: sales_pipeline
+    version: 1.0.0
+
+tools:
+  - supplier_search
+  - vin_decoder
+
+required_core_version: ">=0.5.0"

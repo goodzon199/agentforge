@@ -13,6 +13,7 @@ from app.api.v1 import (
     dashboard,
     logs,
     ops,
+    packs,
     permissions,
     quality,
     settings,
@@ -46,6 +47,7 @@ for module in (
     traces,
     users,
     ops,
+    packs,
 ):
     api_router.include_router(
         module.router,

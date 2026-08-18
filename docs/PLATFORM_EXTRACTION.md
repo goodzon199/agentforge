@@ -166,3 +166,37 @@ services pass E2E.
 - [x] live-equivalent E2E: chat → intake → search → pricing → quote → send → order (two services)
 - [x] HelloPack demo endpoint responds
 - [x] `git grep autoparts` in core-service app/ = 0 (except shared/)
+
+---
+
+## 8. Sprint 5.1 — Pack SDK + Manifest
+
+Standard for connecting a new vertical (Pack) to AgentOS identically.
+
+### Manifest (`shared/pack.py` + pack's `manifest.yaml`)
+
+```yaml
+name: autoparts
+version: 1.0.0
+display_name: AutoParts
+agents: [{type, display_name}, ...]
+permissions: [customer.read, ...]
+workflows: [{name, version}, ...]
+tools: [supplier_search, ...]
+required_core_version: ">=0.5.0"
+```
+
+### Core operations (no core code change per pack)
+
+- `discover` — fetch `/internal/pack/manifest` from every `PACK_BASE_URLS` entry, upsert into `packs`
+- `validate` — shared SDK schema + semver check against `required_core_version`
+- `register` — manual offline registration from a submitted manifest
+- `enable` / `disable` — lifecycle state, enable gated by live healthcheck
+- `healthcheck` — probe `/internal/health`, record `last_health_ok`
+
+### Notes
+
+- `shared.pack` = pure SDK (pydantic + yaml), no SQLAlchemy; both core and packs import it
+- `packs` table (core-db) stores only the contract: name/version/base_url/manifest/state
+- orchestrator `_pack_base_url_for()` routes a domain agent to the active pack that declares it
+- `traces.root_span_id` FK drift fixed (separate migration `7e95954f104a`)

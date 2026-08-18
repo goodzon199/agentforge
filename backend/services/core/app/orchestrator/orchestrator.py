@@ -365,6 +365,23 @@ class Orchestrator:
         stmt = select(AgentRecord).where(AgentRecord.slug == f"{agent_type}-agent")
         return db.scalars(stmt).first()
 
+    def _pack_base_url_for(self, db: Session, agent_type: str) -> str:
+        """Find the pack that provides ``agent_type`` (sprint 5.1).
+
+        Every registered+active pack declares its agents in its manifest.
+        When the first enabled pack provides the agent, we route there; the
+        legacy single-vertical setting is the fallback for a fresh install
+        where autoparts has not been registered yet.
+        """
+        from app.models import Pack
+
+        packs = db.scalars(select(Pack).where(Pack.is_active.is_(True))).all()
+        for pack in packs:
+            agent_names = [a.get("type") for a in (pack.agents or [])]
+            if agent_type in agent_names:
+                return pack.base_url
+        return settings.autoparts_internal_url
+
     def _dispatch_remote(
         self,
         db: Session,
@@ -386,7 +403,7 @@ class Orchestrator:
 
         try:
             result = internal_post(
-                settings.autoparts_internal_url,
+                self._pack_base_url_for(db, agent_type),
                 "/internal/agents/execute",
                 payload={
                     "agent_type": agent_type,
