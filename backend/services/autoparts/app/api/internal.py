@@ -208,3 +208,20 @@ def pack_manifest() -> dict[str, Any]:
         status_code=500,
         detail="manifest.yaml не найден в пакете autoparts.",
     )
+
+
+@router.post("/pack/migrate")
+def pack_migrate() -> dict[str, Any]:
+    """Apply this pack's alembic migrations up to head (sprint 5.2).
+
+    Core calls this during install/upgrade so a new vertical never needs
+    manual DB work. Returns the revision head now applied.
+    """
+    from app.core.pack_migrations import upgrade_to_head
+
+    try:
+        revision = upgrade_to_head()
+    except Exception as exc:
+        logger.exception("pack migrate failed")
+        raise HTTPException(status_code=500, detail=f"migrate failed: {exc}") from exc
+    return {"ok": True, "revision": revision}

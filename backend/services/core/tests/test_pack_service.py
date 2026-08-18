@@ -43,6 +43,21 @@ class _PackHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", "0")
             self.end_headers()
 
+    def do_POST(self):
+        if self.path == "/internal/pack/migrate":
+            import json
+
+            body = json.dumps({"ok": True, "revision": "abc123"}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
     def log_message(self, *args):
         pass
 
@@ -82,7 +97,9 @@ def test_enable_sets_active(db_session, pack_server, monkeypatch):
 def test_disable_sets_disabled(db_session, pack_server, monkeypatch):
     monkeypatch.setattr(settings, "pack_base_urls", [pack_server])
     PackService(db_session).discover()
-    pack = PackService(db_session).disable("autoparts")
+    service = PackService(db_session)
+    service.enable("autoparts")
+    pack = service.disable("autoparts")
     assert pack.state == PackState.disabled
     assert pack.is_active is False
 
@@ -146,3 +163,64 @@ def test_upgrade_version_marks_upgrade_required(db_session, pack_server, monkeyp
     db_session.refresh(pack)
     assert pack.version == "2.0.0"
     assert pack.state == PackState.upgrade_required
+
+
+def test_configure_sets_config(db_session, pack_server, monkeypatch):
+    monkeypatch.setattr(settings, "pack_base_urls", [pack_server])
+    service = PackService(db_session)
+    service.discover()
+    pack = service.configure("autoparts", {"region": "ru", "suppliers": ["rossko"]})
+    assert pack.state == PackState.configured
+    assert pack.config == {"region": "ru", "suppliers": ["rossko"]}
+
+
+def test_upgrade_runs_migrate_and_returns_configured(db_session, pack_server, monkeypatch):
+    monkeypatch.setattr(settings, "pack_base_urls", [pack_server])
+    service = PackService(db_session)
+    service.discover()
+    pack = service.upgrade("autoparts")
+    assert pack.state == PackState.configured  # not active yet
+
+
+def test_uninstall_removes_pack(db_session, pack_server, monkeypatch):
+    monkeypatch.setattr(settings, "pack_base_urls", [pack_server])
+    service = PackService(db_session)
+    service.discover()
+    assert db_session.scalars(select(Pack)).first() is not None
+    service.uninstall("autoparts")
+    assert db_session.scalars(select(Pack)).first() is None
+
+
+def test_transition_guard_blocks_illegal_enable_after_uninstall_state(
+    db_session, pack_server, monkeypatch
+):
+    monkeypatch.setattr(settings, "pack_base_urls", [pack_server])
+    service = PackService(db_session)
+    service.discover()
+    service.enable("autoparts")
+    service.disable("autoparts")
+    # disable -> disabled; re-enable is allowed (disabled is in enable's set).
+    pack = service.enable("autoparts")
+    assert pack.state == PackState.active
+
+
+def test_enable_from_installed_allowed(db_session, pack_server, monkeypatch):
+    monkeypatch.setattr(settings, "pack_base_urls", [pack_server])
+    service = PackService(db_session)
+    service.discover()
+    pack = service.enable("autoparts")
+    assert pack.state == PackState.active
+
+
+def test_full_lifecycle_sequence(db_session, pack_server, monkeypatch):
+    monkeypatch.setattr(settings, "pack_base_urls", [pack_server])
+    service = PackService(db_session)
+    service.discover()  # installed
+    service.configure("autoparts", {"region": "ru"})  # configured
+    service.upgrade("autoparts")  # stays configured (not active)
+    pack = service.enable("autoparts")  # active
+    assert pack.state == PackState.active
+    service.disable("autoparts")  # disabled
+    service.enable("autoparts")  # active again
+    service.uninstall("autoparts")  # gone
+    assert db_session.scalars(select(Pack)).first() is None

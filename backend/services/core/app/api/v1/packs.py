@@ -21,6 +21,10 @@ class ManifestPayload(BaseModel):
     manifest: dict[str, Any]
 
 
+class ConfigurePayload(BaseModel):
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
 def _require_manager(actor: User) -> None:
     if not actor.is_superuser and actor.role not in MANAGER_ROLES:
         raise HTTPException(
@@ -103,6 +107,50 @@ def disable_pack(
     _require_manager(user)
     pack = _service(db).disable(name)
     return _service(db).to_dict(pack)
+
+
+@router.post("/{name}/configure")
+def configure_pack(
+    name: str,
+    payload: ConfigurePayload,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require_manager(user)
+    try:
+        pack = _service(db).configure(name, payload.config)
+    except PackError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _service(db).to_dict(pack)
+
+
+@router.post("/{name}/upgrade")
+def upgrade_pack(
+    name: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Run the pack's own migrations (alembic upgrade head on its DB)."""
+    _require_manager(user)
+    try:
+        pack = _service(db).upgrade(name)
+    except PackError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _service(db).to_dict(pack)
+
+
+@router.delete("/{name}")
+def uninstall_pack(
+    name: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require_manager(user)
+    try:
+        _service(db).uninstall(name)
+    except PackError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True, "pack": name}
 
 
 @router.get("/{name}/healthcheck")

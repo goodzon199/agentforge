@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 from shared.internal import internal_headers
@@ -141,6 +141,24 @@ class PackService:
 
     # --- Lifecycle ---------------------------------------------------------
 
+    # Allowed transitions per operation. ``*`` = any state.
+    _TRANSITIONS: ClassVar[dict[str, set[str]]] = {
+        "install": {"*"},
+        "configure": {"installed", "upgrade_required", "degraded", "disabled"},
+        "enable": {"installed", "configured", "degraded", "disabled", "upgrade_required"},
+        "disable": {"active", "degraded", "configured", "upgrade_required"},
+        "upgrade": {"installed", "configured", "active", "degraded", "disabled", "upgrade_required"},
+        "uninstall": {"*"},
+    }
+
+    def _guard(self, pack: Pack, operation: str) -> None:
+        allowed = self._TRANSITIONS[operation]
+        if "*" not in allowed and pack.state.value not in allowed:
+            raise PackError(
+                f"Pack {pack.name!r} в состоянии {pack.state.value} "
+                f"нельзя {operation}."
+            )
+
     def get(self, name: str) -> Pack:
         pack = self.db.scalars(select(Pack).where(Pack.name == name)).first()
         if pack is None:
@@ -150,8 +168,18 @@ class PackService:
     def list(self) -> list[Pack]:
         return list(self.db.scalars(select(Pack).order_by(Pack.name)))
 
+    def configure(self, name: str, config: dict[str, Any]) -> Pack:
+        pack = self.get(name)
+        self._guard(pack, "configure")
+        pack.config = config or {}
+        pack.state = PackState.configured
+        self.db.commit()
+        self.db.refresh(pack)
+        return pack
+
     def enable(self, name: str) -> Pack:
         pack = self.get(name)
+        self._guard(pack, "enable")
         # Live health gate before activation.
         ok = self._probe_health(pack.base_url)
         if not ok:
@@ -166,11 +194,50 @@ class PackService:
 
     def disable(self, name: str) -> Pack:
         pack = self.get(name)
+        self._guard(pack, "disable")
         pack.is_active = False
         pack.state = PackState.disabled
         self.db.commit()
         self.db.refresh(pack)
         return pack
+
+    def upgrade(self, name: str) -> Pack:
+        """Apply the pack's own migrations, then mark it ready (configured).
+
+        Fetches the current manifest, POSTs /internal/pack/migrate so the
+        pack runs ``alembic upgrade head`` on its own DB, then records the
+        revision. A pack in ``upgrade_required`` (new manifest version seen
+        at register) lands back in ``configured``; an active pack is kept
+        running (migrations are additive).
+        """
+        pack = self.get(name)
+        self._guard(pack, "upgrade")
+        try:
+            resp = httpx.post(
+                f"{pack.base_url.rstrip('/')}/internal/pack/migrate",
+                headers=internal_headers(),
+                timeout=60.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except httpx.HTTPError as exc:
+            raise PackError(
+                f"migrate pack {name!r} не удался: {exc}"
+            ) from exc
+
+        revision = data.get("revision")
+        logger.info("pack %s migrated to %s", name, revision)
+        if not pack.is_active:
+            pack.state = PackState.configured
+        self.db.commit()
+        self.db.refresh(pack)
+        return pack
+
+    def uninstall(self, name: str) -> None:
+        pack = self.get(name)
+        self._guard(pack, "uninstall")
+        self.db.delete(pack)
+        self.db.commit()
 
     def healthcheck(self, name: str) -> dict[str, Any]:
         pack = self.get(name)
@@ -216,4 +283,5 @@ class PackService:
                 pack.last_healthcheck_at.isoformat() if pack.last_healthcheck_at else None
             ),
             "last_health_ok": pack.last_health_ok,
+            "config": pack.config or {},
         }

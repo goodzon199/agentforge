@@ -50,5 +50,8 @@ class Pack(UUIDPrimaryKeyMixin, Base):
     )
     last_health_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
+    # Sprint 5.2: per-pack configuration set by the operator (configure step).
+    config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Pack {self.name}@{self.version} state={self.state.value}>"
