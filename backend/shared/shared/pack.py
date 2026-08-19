@@ -45,13 +45,34 @@ class PackWorkflow(BaseModel):
     version: str = "1.0.0"
 
 
+class PackDependency(BaseModel):
+    """A dependency on another pack (sprint 5.7 registry)."""
+
+    name: str = Field(min_length=1, max_length=80)
+    version_req: str = ">=0.0.0"
+
+
 class PackManifest(BaseModel):
-    """Validated contents of a pack's manifest.yaml."""
+    """Validated contents of a pack's manifest.yaml.
+
+    Sprint 5.7 adds registry metadata: the pack is a first-class artifact with
+    developer, license, dependency requirements, a content checksum and an
+    optional developer signature. Core never trusts a pack it cannot place in
+    its registry with a stable identity.
+    """
 
     name: str = Field(min_length=1, max_length=80)
     version: str = Field(pattern=r"^\d+\.\d+\.\d+$")
     display_name: str = ""
     description: str = ""
+
+    # Registry metadata (sprint 5.7).
+    developer: str = ""
+    homepage: str = ""
+    license: str = ""
+    dependencies: list[PackDependency] = Field(default_factory=list)
+    checksum: str = ""  # sha256 over the canonical manifest (developer-provided or verified)
+    signature: str = ""  # optional developer signature over the checksum
 
     agents: list[PackAgent] = Field(default_factory=list)
     permissions: list[str] = Field(default_factory=list)
@@ -66,9 +87,33 @@ class PackManifest(BaseModel):
     def workflow_names(self) -> list[str]:
         return [w.name for w in self.workflows]
 
+    def dependency_names(self) -> list[str]:
+        return [d.name for d in self.dependencies]
+
     def check_core_compatible(self, core_version: str) -> bool:
         """True when ``core_version`` satisfies ``required_core_version``."""
         return matches_requirement(core_version, self.required_core_version)
+
+    def check_dependency(self, name: str, version: str) -> bool:
+        """True when a registered dependency at ``version`` satisfies it."""
+        for dep in self.dependencies:
+            if dep.name == name:
+                return matches_requirement(version, dep.version_req)
+        return True  # no requirement on this pack
+
+
+def compute_checksum(manifest: PackManifest) -> str:
+    """sha256 over the canonical manifest JSON (without checksum/signature).
+
+    Core verifies a pack's integrity before registering it; the pack may
+    precompute the same value in its manifest.checksum.
+    """
+    import hashlib
+    import json
+
+    data = manifest.model_dump(mode="json", exclude={"checksum", "signature"})
+    canonical = json.dumps(data, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 class ManifestError(ValueError):
@@ -116,6 +161,12 @@ def _validate_semantics(manifest: PackManifest) -> None:
     names = manifest.agent_types()
     if len(names) != len(set(names)):
         raise ManifestError("agents: имена агентов не уникальны.")
+    for dep in manifest.dependencies:
+        if not dep.version_req or not _is_requirement(dep.version_req):
+            raise ManifestError(
+                f"dependency {dep.name!r}: version_req не в формате '<op><semver>': "
+                f"{dep.version_req!r}"
+            )
 
 
 # --- semver helpers ---------------------------------------------------------

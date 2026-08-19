@@ -119,7 +119,14 @@ class WorkflowRuntime:
         if current is None:
             raise WorkflowRuntimeError(f"start {workflow.start!r} не найден.")
         if task is not None:
-            self._add_event(task, f"workflow {workflow.name} стартует с {current.id}.")
+            self._add_event(
+                task,
+                f"workflow {workflow.name} стартует с {current.id}.",
+                meta={
+                    "workflow": workflow.name,
+                    "pack": owning_pack.name if owning_pack else None,
+                },
+            )
 
         visited: set[str] = set()
         steps: list[dict[str, Any]] = []
@@ -295,7 +302,7 @@ class WorkflowRuntime:
         self.db.flush()
         return action
 
-    def _add_event(self, task, message: str) -> None:
+    def _add_event(self, task, message: str, *, meta: dict[str, Any] | None = None) -> None:
         from app.models import TaskEvent
 
         self.db.add(
@@ -305,6 +312,6 @@ class WorkflowRuntime:
                 source="workflow_runtime",
                 level="info",
                 message=message,
-                meta={},
+                meta=meta or {},
             )
         )

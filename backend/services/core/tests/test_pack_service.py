@@ -4,7 +4,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
-from shared.pack import PackState
+from shared.pack import PackState, compute_checksum, parse_manifest
 from sqlalchemy import select
 
 from app.core.config import settings
@@ -224,3 +224,122 @@ def test_full_lifecycle_sequence(db_session, pack_server, monkeypatch):
     service.enable("autoparts")  # active again
     service.uninstall("autoparts")  # gone
     assert db_session.scalars(select(Pack)).first() is None
+
+
+def test_register_stores_registry_metadata(db_session, monkeypatch):
+    manifest = parse_manifest(
+        {
+            "name": "billing",
+            "version": "1.0.0",
+            "display_name": "Billing",
+            "developer": "AgentOS Labs",
+            "homepage": "https://agentos.local/billing",
+            "license": "Apache-2.0",
+            "dependencies": [{"name": "autoparts", "version_req": ">=1.0.0"}],
+            "agents": [{"type": "invoice"}],
+        }
+    )
+    pack = PackService(db_session).register("http://localhost:9", manifest)
+    assert pack.developer == "AgentOS Labs"
+    assert pack.homepage == "https://agentos.local/billing"
+    assert pack.license == "Apache-2.0"
+    assert pack.dependencies == [{"name": "autoparts", "version_req": ">=1.0.0"}]
+    assert pack.checksum == compute_checksum(manifest)
+    assert pack.signature == ""
+
+
+def test_register_with_checksum_verified(db_session, monkeypatch):
+    base = {
+        "name": "billing",
+        "version": "1.0.0",
+        "agents": [{"type": "invoice"}],
+    }
+    manifest = parse_manifest({**base, "checksum": compute_checksum(parse_manifest(base))})
+    pack = PackService(db_session).register("http://localhost:9", manifest)
+    assert pack.checksum == manifest.checksum
+
+
+def test_register_with_wrong_checksum_rejected(db_session, monkeypatch):
+    manifest = parse_manifest(
+        {
+            "name": "billing",
+            "version": "1.0.0",
+            "agents": [{"type": "invoice"}],
+            "checksum": "deadbeef",
+        }
+    )
+    with pytest.raises(PackError):
+        PackService(db_session).register("http://localhost:9", manifest)
+
+
+def test_to_dict_includes_registry(db_session, monkeypatch):
+    manifest = parse_manifest(
+        {
+            "name": "billing",
+            "version": "1.0.0",
+            "developer": "AgentOS Labs",
+            "license": "Apache-2.0",
+            "agents": [{"type": "invoice"}],
+        }
+    )
+    pack = PackService(db_session).register("http://localhost:9", manifest)
+    data = PackService(db_session).to_dict(pack)
+    assert data["developer"] == "AgentOS Labs"
+    assert data["license"] == "Apache-2.0"
+    assert "dependencies" in data
+    assert "checksum" in data
+    assert "signature" in data
+
+
+def test_enable_requires_active_dependency(db_session, pack_server, monkeypatch):
+    monkeypatch.setattr(settings, "pack_base_urls", [pack_server])
+    service = PackService(db_session)
+    service.discover()  # autoparts installed (not active)
+    dependent = parse_manifest(
+        {
+            "name": "billing",
+            "version": "1.0.0",
+            "dependencies": [{"name": "autoparts", "version_req": ">=1.0.0"}],
+            "agents": [{"type": "invoice"}],
+        }
+    )
+    service.register("http://localhost:9", dependent)
+    with pytest.raises(PackError, match="не активна"):
+        service.enable("billing")
+
+
+def test_enable_with_unsatisfied_dependency_version(db_session, pack_server, monkeypatch):
+    monkeypatch.setattr(settings, "pack_base_urls", [pack_server])
+    service = PackService(db_session)
+    service.discover()
+    service.enable("autoparts")  # 1.0.0
+    dependent = parse_manifest(
+        {
+            "name": "billing",
+            "version": "1.0.0",
+            "dependencies": [{"name": "autoparts", "version_req": ">=2.0.0"}],
+            "agents": [{"type": "invoice"}],
+        }
+    )
+    service.register("http://localhost:9", dependent)
+    with pytest.raises(PackError, match="не удовлетворяет"):
+        service.enable("billing")
+
+
+def test_enable_with_satisfied_dependency(db_session, pack_server, monkeypatch):
+    monkeypatch.setattr(settings, "pack_base_urls", [pack_server])
+    service = PackService(db_session)
+    service.discover()
+    service.enable("autoparts")
+    dependent = parse_manifest(
+        {
+            "name": "billing",
+            "version": "1.0.0",
+            "dependencies": [{"name": "autoparts", "version_req": ">=1.0.0"}],
+            "agents": [{"type": "invoice"}],
+        }
+    )
+    service.register(pack_server, dependent)
+    pack = service.enable("billing")
+    assert pack.state == PackState.active
+    assert pack.is_active is True

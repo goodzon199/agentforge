@@ -53,5 +53,13 @@ class Pack(UUIDPrimaryKeyMixin, Base):
     # Sprint 5.2: per-pack configuration set by the operator (configure step).
     config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
+    # Sprint 5.7: registry metadata (pack as a first-class distributable artifact).
+    developer: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    homepage: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    license: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    dependencies: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    checksum: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    signature: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Pack {self.name}@{self.version} state={self.state.value}>"

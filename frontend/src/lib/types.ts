@@ -89,6 +89,122 @@ export type DashboardStats = {
   logs_total: number;
 };
 
+export type PackDependency = {
+  name: string;
+  version_req: string;
+};
+
+export type Pack = {
+  id: string;
+  name: string;
+  version: string;
+  display_name: string;
+  description: string;
+  base_url: string;
+  required_core_version: string;
+  state: string;
+  is_active: boolean;
+  agents: { type: string; display_name?: string }[];
+  permissions: string[];
+  workflows: { name: string; version?: string }[];
+  tools: string[];
+  developer: string;
+  homepage: string;
+  license: string;
+  dependencies: PackDependency[];
+  checksum: string;
+  signature: string;
+  last_healthcheck_at: string | null;
+  last_health_ok: boolean | null;
+  config: Record<string, unknown>;
+};
+
+export type PlatformOverview = {
+  companies: number;
+  agents: number;
+  agents_active: number;
+  tasks: number;
+  tasks_completed: number;
+  tasks_failed: number;
+  packs: number;
+  packs_active: number;
+  workflows: number;
+  tools: number;
+  approvals_pending: number;
+};
+
+export type PlatformWorkflowNode = {
+  id: string;
+  type: string;
+  [key: string]: unknown;
+};
+
+export type PlatformWorkflow = {
+  pack: string;
+  name: string;
+  version: string;
+  start: string;
+  nodes: PlatformWorkflowNode[];
+};
+
+export type PlatformWorkflowList = {
+  workflows: PlatformWorkflow[];
+  errors: { pack: string; error: string }[];
+};
+
+export type PlatformTool = {
+  name: string;
+  source: string;
+  pack: string | null;
+};
+
+export type PlatformToolList = {
+  tools: PlatformTool[];
+};
+
+export type PlatformApproval = {
+  id: string;
+  company_id: string;
+  agent_id: string | null;
+  task_id: string | null;
+  action_type: string;
+  target_type: string | null;
+  target_id: string | null;
+  risk_level: string;
+  input_data: Record<string, unknown> | null;
+  created_at: string;
+};
+
+export type PlatformApprovalList = {
+  approvals: PlatformApproval[];
+};
+
+export type UsageBucket = {
+  [key: string]: unknown;
+};
+
+export type UsageSummary = {
+  days: number;
+  totals: {
+    tasks_total: number;
+    tasks_completed: number;
+    tasks_failed: number;
+    approvals_pending: number;
+    approvals_decided: number;
+    llm_calls: number;
+    llm_tokens: number;
+    llm_cost_rub: number;
+    agent_executions: number;
+    tool_calls: number;
+    workflow_runs: number;
+  };
+  by_tenant: UsageBucket[];
+  by_pack: UsageBucket[];
+  by_workflow: UsageBucket[];
+  by_agent: UsageBucket[];
+  storage_rows: Record<string, number>;
+};
+
 export type TraceSummary = {
   id: string;
   company_id: string | null;

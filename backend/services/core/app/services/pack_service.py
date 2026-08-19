@@ -9,6 +9,7 @@ from shared.pack import (
     ManifestError,
     PackManifest,
     PackState,
+    compute_checksum,
     parse_manifest,
 )
 from sqlalchemy import select
@@ -81,7 +82,44 @@ class PackService:
                 f"pack требует core {manifest.required_core_version}, "
                 f"а установлен {settings.core_version}"
             )
+        if not manifest.developer:
+            problems.append("pack не указывает developer (рекомендуется)")
+        if not manifest.license:
+            problems.append("pack не указывает license (рекомендуется)")
+        # Verify the pack's self-declared checksum when present (5.7).
+        if manifest.checksum:
+            actual = compute_checksum(manifest)
+            if actual != manifest.checksum:
+                raise PackError(
+                    f"checksum не совпадает: manifest заявляет {manifest.checksum}, "
+                    f"вычислено {actual}"
+                )
         return problems
+
+    def check_dependencies(self, manifest: PackManifest) -> None:
+        """Registry dependency gate (sprint 5.7).
+
+        Every declared dependency must be registered at a satisfying version
+        and active. Without this, a pack could silently depend on a pack that
+        was never installed.
+        """
+        for dep in manifest.dependencies:
+            dep_pack = self.db.scalars(
+                select(Pack).where(Pack.name == dep.name)
+            ).first()
+            if dep_pack is None:
+                raise PackError(
+                    f"зависимость {dep.name!r} не зарегистрирована в реестре."
+                )
+            if not manifest.check_dependency(dep.name, dep_pack.version):
+                raise PackError(
+                    f"зависимость {dep.name}@{dep_pack.version} не удовлетворяет "
+                    f"{dep.version_req}."
+                )
+            if not dep_pack.is_active:
+                raise PackError(
+                    f"зависимость {dep.name!r} не активна — активируйте её первым."
+                )
 
     # --- Registration ------------------------------------------------------
 
@@ -105,6 +143,12 @@ class PackService:
                 permissions=manifest.permissions,
                 workflows=manifest.model_dump(mode="json")["workflows"],
                 tools=manifest.tools,
+                developer=manifest.developer,
+                homepage=manifest.homepage,
+                license=manifest.license,
+                dependencies=manifest.model_dump(mode="json")["dependencies"],
+                checksum=manifest.checksum or compute_checksum(manifest),
+                signature=manifest.signature,
                 state=PackState.installed,
                 is_active=False,
             )
@@ -123,6 +167,12 @@ class PackService:
             existing.permissions = manifest.permissions
             existing.workflows = manifest.model_dump(mode="json")["workflows"]
             existing.tools = manifest.tools
+            existing.developer = manifest.developer
+            existing.homepage = manifest.homepage
+            existing.license = manifest.license
+            existing.dependencies = manifest.model_dump(mode="json")["dependencies"]
+            existing.checksum = manifest.checksum or compute_checksum(manifest)
+            existing.signature = manifest.signature
             pack = existing
 
         self.db.commit()
@@ -180,6 +230,16 @@ class PackService:
     def enable(self, name: str) -> Pack:
         pack = self.get(name)
         self._guard(pack, "enable")
+        # Registry dependency gate (5.7): all declared dependencies must be
+        # registered, version-satisfying and active.
+        if pack.dependencies:
+            try:
+                manifest = parse_manifest(pack.manifest or {})
+                self.check_dependencies(manifest)
+            except (ManifestError, PackError) as exc:
+                raise PackError(
+                    f"Pack {name!r} нельзя активировать: {exc}"
+                ) from exc
         # Live health gate before activation.
         ok = self._probe_health(pack.base_url)
         if not ok:
@@ -279,6 +339,12 @@ class PackService:
             "permissions": pack.permissions,
             "workflows": pack.workflows,
             "tools": pack.tools,
+            "developer": pack.developer,
+            "homepage": pack.homepage,
+            "license": pack.license,
+            "dependencies": pack.dependencies,
+            "checksum": pack.checksum,
+            "signature": pack.signature,
             "last_healthcheck_at": (
                 pack.last_healthcheck_at.isoformat() if pack.last_healthcheck_at else None
             ),

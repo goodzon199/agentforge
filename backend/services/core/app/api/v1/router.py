@@ -15,6 +15,7 @@ from app.api.v1 import (
     ops,
     packs,
     permissions,
+    platform,
     quality,
     settings,
     tasks,
@@ -49,6 +50,8 @@ for module in (
     users,
     ops,
     packs,
+    permissions,
+    platform,
     workflows,
 ):
     api_router.include_router(

@@ -415,3 +415,135 @@ workflow, **не меняя pack-код core**. Пак целиком на Pack 
 Итог: гипотеза подтверждена — новый вертикаль ставится и исполняется через
 pack-контракт без правок pack-кода core; понадобились только два общих фикса
 workflow runtime, которые улучшают платформу для всех паков.
+
+---
+
+## 13. Sprint 5.6 — Platform UI (операторское консоль)
+
+Платформенная навигация поверх существующего AutoParts ops UI: «Платформа»
+(viewer/operator) + «AutoParts» (домен) — обе группы доступны из Sidebar.
+
+### Backend (core)
+
+- `app/api/v1/platform.py` — роутер платформы (зарегистрирован в `router.py`):
+  - `GET /api/v1/platform/overview` — companies, agents(+active), tasks
+    (total/completed/failed), packs(+active), workflows, tools, approvals_pending
+  - `GET /api/v1/platform/workflows` — из `packs` table (workflows JSON) +
+    локальные `Workflow`-строки
+  - `GET /api/v1/platform/tools` — tool_registry.list() из активных паков
+    (объекты/словари инструментов с `type=pack`) + core-инструменты (search,
+    email, http)
+  - `GET /api/v1/platform/approvals` — pending/decided AgentAction approvals
+    (risk level + task)
+  - `POST /api/v1/platform/approvals/{id}/approve|reject` — решает approval
+    (approve → executed + `decided=approved`)
+  - `GET /api/v1/platform/usage?days=30` — см. Sprint 5.8
+- Фиксы по ходу: у `Workflow` нет поля `description` (убрано из payload и
+  frontend type); `tool_registry.list()` возвращает dict, а не объект → доступ
+  по `tool["name"]`.
+
+### Frontend (Next.js App Router)
+
+- `src/components/Sidebar.tsx` — перестроен в `NAV_GROUPS`:
+  - **Платформа**: Overview, Companies, Agents, Workflows, Tools, Packs,
+    Approvals, Usage, Traces, Audit, Settings
+  - **AutoParts**: Dashboard, Conversations, Customers, Orders, Suppliers,
+    Tasks, Logs, Policies (существующие страницы сохранены)
+- Новые страницы: `src/app/{overview,packs,workflows,tools,approvals,usage}/page.tsx`
+  — операторские дашборды поверх API платформы
+- `src/lib/types.ts` — Pack, PlatformOverview, PlatformWorkflow(List),
+  PlatformTool(List), PlatformApproval(List), UsageSummary, PackDependency
+
+### Проверка
+
+- `npm run build` — 25 роутов, без ошибок типов
+- Live: overview (packs=2, approvals_pending=2), workflows
+  (sales_pipeline, booking_pipeline), tools (6 pack + 3 core)
+
+---
+
+## 14. Sprint 5.7 — Pack Registry (metadata, checksum, зависимости)
+
+Усиление registry: каталог + верификация + декларативные зависимости между
+паками.
+
+### SDK (`shared/pack.py`)
+
+- `PackDependency(name, version_req)`; `PackManifest` += `developer`,
+  `homepage`, `license`, `dependencies: list[PackDependency]`, `checksum`,
+  `signature`
+- `compute_checksum()` — sha256 канонического JSON (исключая checksum/signature)
+- `check_dependency()` / `dependency_names()`; `_validate_semantics` проверяет
+  формат `version_req` (например `>=0.5.2`)
+- Тесты `shared/tests/test_pack.py` — 44 проходят
+
+### Core
+
+- `packs` += developer/homepage/license/dependencies(JSON)/checksum/signature
+  (миграция `5b8a2c4d1e0f_add_pack_registry_metadata.py`)
+- `pack_service.validate()` — сверка checksum (ошибка при несовпадении),
+  warning-статусы при отсутствии developer/license
+- `check_dependencies()` + gate в `enable()`: зависимость должна быть
+  зарегистрирована, её версия удовлетворяет `version_req`, она активна
+- `register()` сохраняет registry-метаданные; `to_dict()` включает их
+- Тесты `tests/test_pack_service.py` — 19 (всего core 33, shared 44,
+  beauty 10, autoparts 10); ruff чистый
+
+### Манифесты паков
+
+- autoparts и beauty `manifest.yaml` += `developer: AgentOS Labs`,
+  `homepage: https://agentos.local/packs/<name>`, `license: Apache-2.0`
+
+### Live E2E
+
+- rediscover подтянул developer/license/checksum в core DB
+- core-compat gate: pack с `required_core_version: ">=0.5.2"` против core 0.5.0
+  → 400 `pack требует core >=0.5.2, а установлен 0.5.0`
+- dependency gate: billing объявляет зависимость от autoparts;
+  пока autoparts активен — enable billing успешен; если бы autoparts был
+  неактивен — 409
+
+---
+
+## 15. Sprint 5.8 — Billing/Metering (usage + workflow attribution)
+
+Платформенная телеметрия: сколько задач/LLM/исполнений агентов/workflow-прогонов
+и кто их инициировал (pack/workflow/agent/tenant).
+
+### Attribution
+
+- `workflow_service._add_event(task, msg, *, meta=None)` — стартовое событие
+  workflow несёт `meta={"workflow": ..., "pack": owning_pack.name}` (источник
+  `workflow_runtime`)
+- `app/models` (5.8-фикс): group by по JSON-колонке в Postgres не работает
+  (`could not identify an equality operator for type json`) — подсчёт
+  workflow_runs вынесен в Python: выборка событий + агрегация в `_workflow_runs()`
+
+### Usage service (`app/services/usage_service.py`)
+
+- `summary(days, scope)` — totals (tasks, approvals, llm_calls/tokens/cost_rub,
+  agent_executions, tool_calls, workflow_runs) + by_pack / by_workflow /
+  by_agent / by_tenant (aggregates по LLMUsage, Task, AgentAction, TaskEvent)
+- уровень tenant (scope=company_id) и платформенный (scope=None)
+- `GET /api/v1/platform/usage?days=...` — операторская точка входа
+- Тесты `tests/test_usage_service.py` — 4 (пустой summary, attribution,
+  executions+tool_calls, tenant-фильтрация)
+
+### Frontend
+
+- `src/app/usage/page.tsx` — UsageSummary (totals + by_pack/by_workflow/by_agent/
+  by_tenant таблицы); тип в `types.ts`
+
+### Live E2E
+
+- run `booking_pipeline` (beauty) → usage totals: tasks, llm_calls=67,
+  llm_tokens=29656, tool_calls=22, agent_executions=26, workflow_runs=2;
+  by_pack=[beauty ×2], by_workflow=[booking_pipeline ×2]
+- approvals decide: approve → executed + decided=approved
+- cleanup: e2e-паки удалены (удалены e2e-legacy, billing)
+
+Итог Sprint 5.6–5.8: платформенная консоль (overview/workflows/tools/packs/
+approvals/usage), registry с metadata/checksum/зависимостями и metering с
+workflow-attribution работают end-to-end на живых сервисах (core:8011,
+autoparts:8012, beauty:8013) и покрыты тестами.
+

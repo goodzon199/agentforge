@@ -5,6 +5,10 @@ description: >-
   Автомобильный домен AgentOS: поиск запчастей, цены, котировки, заказы и
   поставщики. Первый вертикаль, подключённый через Pack SDK.
 
+developer: AgentOS Labs
+homepage: https://agentos.local/packs/autoparts
+license: Apache-2.0
+
 agents:
   - type: intake
     display_name: IntakeAgent

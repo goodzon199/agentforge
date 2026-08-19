@@ -6,6 +6,10 @@ description: >-
   бронирование, продажа доп. услуг и напоминания. Второй вертикаль — написана
   целиком на Pack SDK, не трогая core-service.
 
+developer: AgentOS Labs
+homepage: https://agentos.local/packs/beauty
+license: Apache-2.0
+
 agents:
   - type: reception
     display_name: ReceptionAgent
