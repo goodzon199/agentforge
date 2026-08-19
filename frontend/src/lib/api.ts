@@ -1,4 +1,32 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8011/api/v1";
+const DOMAIN_API_URL =
+  process.env.NEXT_PUBLIC_DOMAIN_API_URL ?? "http://localhost:8012/api/v1";
+
+// Sprint 5.0 split: domain verticals (autoparts) moved out of core. Domain
+// prefixes go to the domain service, everything else stays on the platform.
+const DOMAIN_PREFIXES = [
+  "/manager",
+  "/part_requests",
+  "/quotes",
+  "/orders",
+  "/suppliers",
+  "/supplier-orders",
+  "/garage",
+  "/fitment",
+  "/approvals",
+  "/actions",
+  "/hellopack",
+  "/conversations",
+  "/customers",
+  "/tasks",
+  "/company-policies",
+];
+
+function baseFor(path: string): string {
+  return DOMAIN_PREFIXES.some((prefix) => path.startsWith(prefix))
+    ? DOMAIN_API_URL
+    : API_URL;
+}
 
 export const TOKEN_KEY = "agentforge_token";
 export const USER_KEY = "agentforge_user";
@@ -30,7 +58,7 @@ export function getStoredUser<T = { is_superuser?: boolean }>(): T | null {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${baseFor(path)}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",

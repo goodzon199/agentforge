@@ -331,13 +331,21 @@ export default function DashboardPage() {
                 <span className="text-xs text-slate-500">деньги, SLA и конверсия</span>
               </div>
               <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-                <StatCard label="Выручка" value={`${analytics.data.revenue} ₽`} hint={`прибыль: ${analytics.data.gross_profit} ₽`} />
-                <StatCard label="Заказы" value={analytics.data.orders_total} hint={`КП отправлено: ${analytics.data.quotes_sent}`} />
-                <StatCard label="Запросы" value={analytics.data.requests_total} hint={`AI ответил: ${analytics.data.ai_handled}`} />
+                <StatCard
+                  label="Выручка"
+                  value={analytics.data.revenue != null ? `${analytics.data.revenue} ₽` : "—"}
+                  hint={analytics.data.gross_profit != null ? `прибыль: ${analytics.data.gross_profit} ₽` : undefined}
+                />
+                <StatCard
+                  label="Заказы"
+                  value={analytics.data.orders_total ?? "—"}
+                  hint={analytics.data.quotes_sent != null ? `КП отправлено: ${analytics.data.quotes_sent}` : undefined}
+                />
+                <StatCard label="Запросы" value={analytics.data.requests_total ?? "—"} hint={`AI ответил: ${analytics.data.ai_handled ?? 0}`} />
                 <StatCard
                   label="Передано менеджеру"
-                  value={`${analytics.data.handed_to_manager}`}
-                  hint={`перехват: ${analytics.data.takeover_rate}% · ответ ${analytics.data.avg_response_seconds ?? "—"}с`}
+                  value={`${analytics.data.handed_to_manager ?? 0}`}
+                  hint={`перехват: ${analytics.data.takeover_rate ?? 0}% · ответ ${analytics.data.avg_response_seconds ?? "—"}с`}
                 />
               </div>
 
@@ -386,13 +394,17 @@ export default function DashboardPage() {
                     <div className="flex items-center justify-between">
                       <span className="text-slate-200">Поставщики</span>
                       <span className="text-slate-400">
-                        {analytics.data.suppliers.attempts_total} попыток · ошибок {analytics.data.suppliers.failure_rate}%
+                        {analytics.data.suppliers
+                          ? `${analytics.data.suppliers.attempts_total} попыток · ошибок ${analytics.data.suppliers.failure_rate}%`
+                          : "—"}
                       </span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-slate-200">Латентность</span>
                       <span className="text-slate-400">
-                        avg {analytics.data.suppliers.avg_latency_ms !== null ? `${analytics.data.suppliers.avg_latency_ms}мс` : "—"} · p95 {analytics.data.suppliers.p95_latency_ms !== null ? `${analytics.data.suppliers.p95_latency_ms}мс` : "—"}
+                        {analytics.data.suppliers
+                          ? `avg ${analytics.data.suppliers.avg_latency_ms !== null ? `${analytics.data.suppliers.avg_latency_ms}мс` : "—"} · p95 ${analytics.data.suppliers.p95_latency_ms !== null ? `${analytics.data.suppliers.p95_latency_ms}мс` : "—"}`
+                          : "—"}
                       </span>
                     </div>
                     <div className="flex items-center justify-between">

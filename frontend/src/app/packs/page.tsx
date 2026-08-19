@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
-import type { Pack, PlatformOverview } from "@/lib/types";
+import type { Pack, PackList, PlatformOverview } from "@/lib/types";
 import { EmptyState, ErrorBox, Loading, SectionHeader, StatusBadge } from "@/components/ui";
 
 const STATE_TONE: Record<string, string> = {
@@ -139,7 +139,7 @@ function PackCard({ pack, onChanged }: { pack: Pack; onChanged: () => void }) {
 }
 
 export default function PacksPage() {
-  const { data, loading, error, reload } = useApi<Pack[]>("/packs");
+  const { data, loading, error, reload } = useApi<PackList>("/packs");
   const overview = useApi<PlatformOverview>("/platform/overview");
 
   return (
@@ -156,7 +156,7 @@ export default function PacksPage() {
         <Loading />
       ) : error ? (
         <ErrorBox message={error} />
-      ) : data && data.length === 0 ? (
+      ) : data && data.packs.length === 0 ? (
         <EmptyState
           title="Packs не зарегистрированы"
           description="Запустите discover — core прочитает манифесты из PACK_BASE_URLS и добавит packs в реестр."
@@ -170,7 +170,7 @@ export default function PacksPage() {
             </p>
           ) : null}
           <div className="grid gap-4 lg:grid-cols-2">
-            {data?.map((p) => <PackCard key={p.name} pack={p} onChanged={reload} />)}
+            {data?.packs.map((p) => <PackCard key={p.name} pack={p} onChanged={reload} />)}
           </div>
         </>
       )}

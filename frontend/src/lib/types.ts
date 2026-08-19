@@ -119,6 +119,10 @@ export type Pack = {
   config: Record<string, unknown>;
 };
 
+export type PackList = {
+  packs: Pack[];
+};
+
 export type PlatformOverview = {
   companies: number;
   agents: number;
