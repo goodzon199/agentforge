@@ -1,0 +1,38 @@
+name: beauty
+version: 1.0.0
+display_name: Beauty Salon
+description: >-
+  Салон красоты AgentOS: приём заявок на услуги, поиск свободных слотов,
+  бронирование, продажа доп. услуг и напоминания. Второй вертикаль — написана
+  целиком на Pack SDK, не трогая core-service.
+
+agents:
+  - type: reception
+    display_name: ReceptionAgent
+  - type: calendar
+    display_name: CalendarAgent
+  - type: booking
+    display_name: BookingAgent
+  - type: sales
+    display_name: SalesAgent
+  - type: reminder
+    display_name: ReminderAgent
+
+permissions:
+  - customer.read
+  - calendar.read
+  - calendar.write
+  - booking.create
+  - notification.send
+
+workflows:
+  - name: booking_pipeline
+    version: 1.0.0
+
+tools:
+  - salon_catalog
+  - calendar_slots
+  - calendar_book
+  - reminder_schedule
+
+required_core_version: ">=0.5.0"

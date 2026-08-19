@@ -345,3 +345,73 @@ class LeadAgent(Agent):
 - workflow `sales_pipeline` `requires_search=false` — intake -> classify -> human/end
 - `requires_search=true` — intake -> search(SDK) -> pricing(SDK) -> approval(human,
   awaiting_approval, AgentAction workflow_human pending recorded)
+
+## 12. Sprint 5.5 — Второй вертикаль (Beauty/Salon): доказательство гипотезы
+
+Цель: новый вертикаль (салон красоты) ставится в платформу и исполняет свой
+workflow, **не меняя pack-код core**. Пак целиком на Pack SDK — без своей БД,
+без знания внутренностей core.
+
+### Beauty pack (`services/beauty`)
+
+- `manifest.yaml` — name=beauty, version=1.0.0, agents
+  reception/calendar/booking/sales/reminder, permissions (customer.read,
+  calendar.read, calendar.write, booking.create, notification.send),
+  workflows=[booking_pipeline], tools, `required_core_version: ">=0.5.0"`
+- `workflows/booking_pipeline.yaml` — reception -> classify -> calendar ->
+  slot_check -> booking -> sales -> reminder -> done; classify/slot_check —
+  condition-ноды, human/end — фолбэк при нехватке данных/слотов
+- `app/salon.py` — домен салона в памяти (Service/Slot/Booking, генерация
+  слотов по мастерам и часам); никакой БД — доказательство «паку не нужна своя
+  БД»
+- `app/tools/` — SalonCatalogTool / CalendarSlotsTool / CalendarBookTool /
+  ReminderScheduleTool на shared `Tool` SDK (ClassVar permissions)
+- `app/agents/` — 5 агентов на shared `Agent` SDK напрямую (`BeautyAgent(SDKAgent)`),
+  registry на `AgentRegistry`, резолв по `kind`
+- `app/context.py` — минимальные pure-SDK фасады пака: RunMemory, RunPermissions
+  (permissions из manifest.yaml), RunAudit (actions/approvals/events в памяти),
+  NoopTrace — без БД
+- `app/api/internal.py` — контракт `/internal/{health,pack/manifest,pack/migrate,
+  pack/workflows,agents/execute}` (migrate — no-op: БД нет)
+
+### Core-фиксы workflow runtime (общие, не про красоту)
+
+Второй вертикаль вскрыл два пробела в `services/workflow_service.py`, починили
+обобщённо (с тестами):
+
+1. **Threading контекста между agent-нодами.** Раньше на каждую agent-ноду
+   уходил только исходный `input_data` задачи. Прогрессивный пайплайн
+   (reception узнаёт услугу/дату -> calendar ищет слот) требует передачи
+   накопленного контекста. `_agent_input_data()` мёржит исходный input_data с
+   накопленными ключами run_context (резерв: task_id/objective/input_data/output).
+2. **Dispatch в свой pack при коллизии типов агентов.** И autoparts, и beauty
+   объявляют `sales` (и др. общие имена). `_pack_for_agent` искал по всем
+   активным пакам, и workflow beauty попадал на autoparts-агента. `run()`
+   теперь принимает `owning_pack`, `_pack_for_agent(prefer=...)` отдаёт
+   приоритет своему паку, остальные — фолбэк.
+
+### Тесты
+
+- beauty: `tests/test_beauty.py` (10) — registry describe, reception
+  (service+date), calendar slot, booking, sales upsell, reminder, полный
+  пайплайн через SDK, deny permission, валидация workflow-файла
+- core: `tests/test_workflow_service.py` (6) — + threading контекста между
+  agent-нодами, + dispatch в свой pack при коллизии типа агента
+- ruff чистый: shared / autoparts / beauty / core (app+tests)
+
+### Live E2E (core:8011 / autoparts:8012 / beauty:8013)
+
+- discover: оба пака (`autoparts`, `beauty`) через PACK_BASE_URLS
+- enable beauty -> state=active, base_url=http://127.0.0.1:8013
+- `GET /api/v1/workflows/beauty/workflows` -> booking_pipeline
+- задача «Запишите меня на стрижку 2026-08-25» (input_data: customer_name=Ирина)
+- run `POST /api/v1/workflows/beauty/booking_pipeline/run`:
+  reception -> classify(true) -> calendar -> slot_check(true) -> booking ->
+  sales(beauty, upsell «укладка (+800 ₽)») -> reminder -> done; status=completed
+- до фикса №2 sales уходил на autoparts («Не указана квота...») — после фикса
+  подтверждение красоты: «Запись подтверждена ... Стоимость 1500 ₽», booking_id,
+  reminder назначен
+
+Итог: гипотеза подтверждена — новый вертикаль ставится и исполняется через
+pack-контракт без правок pack-кода core; понадобились только два общих фикса
+workflow runtime, которые улучшают платформу для всех паков.

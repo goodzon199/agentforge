@@ -1,0 +1,59 @@
+name: booking_pipeline
+version: 1.0.0
+start: reception
+
+nodes:
+  - id: reception
+    type: agent
+    agent: reception
+    description: "Принять заявку клиента: распознать услугу и желаемую дату"
+    next: classify
+
+  - id: classify
+    type: condition
+    description: "Клиент назвал услугу и дату — можно искать слот"
+    expression: "context.get('has_service', False) and context.get('has_date', False)"
+    branches:
+      "true": calendar
+      "false": human
+
+  - id: calendar
+    type: agent
+    agent: calendar
+    description: Найти свободный слот на нужную дату
+    next: slot_check
+
+  - id: slot_check
+    type: condition
+    description: Свободный слот найден
+    expression: "context.get('slot_found', False)"
+    branches:
+      "true": booking
+      "false": human
+
+  - id: booking
+    type: agent
+    agent: booking
+    description: "Забронировать найденный слот за клиентом"
+    next: sales
+
+  - id: sales
+    type: agent
+    agent: sales
+    description: "Предложить доп. услуги и оформить подтверждение записи"
+    next: reminder
+
+  - id: reminder
+    type: agent
+    agent: reminder
+    description: Назначить напоминание о визите
+    next: done
+
+  - id: human
+    type: end
+    description: "Не хватает данных или нет свободных слотов — передали администратору"
+    message: Заявка передана администратору салона
+
+  - id: done
+    type: end
+    description: Запись оформлена, напоминание назначено

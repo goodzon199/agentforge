@@ -75,7 +75,9 @@ def run_workflow(
         pack_record = PackService(db).get(pack)
         runtime = WorkflowRuntime(db)
         definition = runtime.load_named(pack_record, workflow)
-        result = runtime.run(task, definition, payload.context)
+        result = runtime.run(
+            task, definition, payload.context, owning_pack=pack_record
+        )
     except (PackError, WorkflowRuntimeError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     db.commit()

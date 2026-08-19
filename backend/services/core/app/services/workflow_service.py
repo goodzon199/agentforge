@@ -106,6 +106,8 @@ class WorkflowRuntime:
         task,
         workflow: Workflow,
         context: dict[str, Any] | None = None,
+        *,
+        owning_pack: Pack | None = None,
     ) -> dict[str, Any]:
         """Execute a workflow DAG for a task. Returns the accumulated output."""
         run_context: dict[str, Any] = dict(context or {})
@@ -132,7 +134,9 @@ class WorkflowRuntime:
             visited.add(current.id)
 
             if current.type == NodeType.agent:
-                output = self._run_agent_node(task, current, run_context)
+                output = self._run_agent_node(
+                    task, current, run_context, owning_pack=owning_pack
+                )
                 steps.append({"node": current.id, "type": "agent", "output": output})
                 for key, value in (output.get("data", {}) or {}).items():
                     run_context[key] = copy.deepcopy(value)
@@ -192,10 +196,15 @@ class WorkflowRuntime:
     # --- Node handlers -----------------------------------------------------
 
     def _run_agent_node(
-        self, task, node: WorkflowNode, context: dict[str, Any]
+        self, task, node: WorkflowNode, context: dict[str, Any], *, owning_pack: Pack | None = None
     ) -> dict[str, Any]:
-        """Dispatch an agent node to the active pack that provides the agent."""
-        pack = self._pack_for_agent(node.agent or "")
+        """Dispatch an agent node to the active pack that provides the agent.
+
+        The workflow's own pack is preferred so two verticals declaring the
+        same agent type (e.g. ``sales`` in autoparts and beauty) do not
+        collide; other active packs are the fallback.
+        """
+        pack = self._pack_for_agent(node.agent or "", prefer=owning_pack)
         if pack is None:
             raise WorkflowRuntimeError(
                 f"никто из активных packs не поставляет агента {node.agent!r}."
@@ -213,7 +222,7 @@ class WorkflowRuntime:
                 json={
                     "agent_type": node.agent,
                     "objective": context.get("objective", ""),
-                    "input_data": context.get("input_data", {}) or {},
+                    "input_data": self._agent_input_data(context),
                 },
                 timeout=settings.llm_read_timeout + 10.0,
             )
@@ -224,13 +233,39 @@ class WorkflowRuntime:
                 f"node {node.id!r}: remote агент {node.agent!r} не выполнился: {exc}"
             ) from exc
 
-    def _pack_for_agent(self, agent_type: str) -> Pack | None:
+    def _agent_input_data(self, context: dict[str, Any]) -> dict[str, Any]:
+        """Thread accumulated run context into the next agent node.
+
+        Agent outputs are folded into ``run_context`` top-level keys as the
+        DAG walks (e.g. ``service``/``day`` from reception). A progressive
+        pipeline needs those values visible to the next agent, so we merge
+        the original task ``input_data`` with every accumulated context key.
+        Reserved keys (task_id/objective/input_data/output) are excluded.
+        """
+        reserved = {"task_id", "objective", "input_data", "output"}
+        merged = dict(context.get("input_data", {}) or {})
+        for key, value in context.items():
+            if key not in reserved:
+                merged[key] = copy.deepcopy(value)
+        return merged
+
+    def _pack_for_agent(self, agent_type: str, *, prefer: Pack | None = None) -> Pack | None:
+        """Find an active pack that provides ``agent_type``.
+
+        ``prefer`` (the workflow's owning pack) wins ties: agent types are not
+        globally unique across verticals, so a workflow must dispatch to its own
+        pack first.
+        """
         packs = self.db.scalars(
             select(Pack).where(
                 Pack.is_active.is_(True),
                 Pack.state == PackState.active,
             )
         ).all()
+        if prefer is not None and any(
+            a.get("type") == agent_type for a in (prefer.agents or [])
+        ):
+            return prefer
         for pack in packs:
             if any(a.get("type") == agent_type for a in (pack.agents or [])):
                 return pack
