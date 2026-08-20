@@ -11,6 +11,7 @@ from app.api.v1 import (
     company_policies,
     conversations,
     dashboard,
+    gateway,
     logs,
     ops,
     packs,
@@ -65,5 +66,12 @@ api_router.include_router(
 )
 api_router.include_router(
     conversations.conversations_router,
+    dependencies=[Depends(get_current_user), Depends(check_business_rate)],
+)
+
+# Platform gateway: catch-all /api/v1/{pack_route}/{path} proxied to the owning
+# pack (sprint 5.8.1). Registered LAST so core's own static routers win.
+api_router.include_router(
+    gateway.router,
     dependencies=[Depends(get_current_user), Depends(check_business_rate)],
 )

@@ -10,6 +10,10 @@ developer: AgentOS Labs
 homepage: https://agentos.local/packs/beauty
 license: Apache-2.0
 
+routes:
+  - prefix: /beauty
+    service: beauty
+
 agents:
   - type: reception
     display_name: ReceptionAgent

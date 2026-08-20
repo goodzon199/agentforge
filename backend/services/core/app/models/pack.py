@@ -61,5 +61,9 @@ class Pack(UUIDPrimaryKeyMixin, Base):
     checksum: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     signature: Mapped[str] = mapped_column(Text, nullable=False, default="")
 
+    # Sprint 5.8.1: external API namespaces core exposes for this pack through
+    # the platform gateway (list of {prefix, service}).
+    routes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Pack {self.name}@{self.version} state={self.state.value}>"

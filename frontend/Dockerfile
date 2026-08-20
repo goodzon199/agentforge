@@ -6,8 +6,6 @@ RUN npm ci --no-audit --no-fund 2>/dev/null || npm install --no-audit --no-fund
 COPY . .
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
-ARG NEXT_PUBLIC_DOMAIN_API_URL=http://localhost:8000/api/v1
-ENV NEXT_PUBLIC_DOMAIN_API_URL=$NEXT_PUBLIC_DOMAIN_API_URL
 RUN npm run build
 
 # run stage (Next.js standalone output)

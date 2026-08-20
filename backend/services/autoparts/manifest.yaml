@@ -9,6 +9,10 @@ developer: AgentOS Labs
 homepage: https://agentos.local/packs/autoparts
 license: Apache-2.0
 
+routes:
+  - prefix: /autoparts
+    service: autoparts
+
 agents:
   - type: intake
     display_name: IntakeAgent

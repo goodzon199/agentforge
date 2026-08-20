@@ -291,6 +291,21 @@ def test_to_dict_includes_registry(db_session, monkeypatch):
     assert "signature" in data
 
 
+def test_register_stores_routes(db_session, monkeypatch):
+    manifest = parse_manifest(
+        {
+            "name": "autoparts",
+            "version": "1.0.0",
+            "routes": [{"prefix": "/autoparts", "service": "autoparts"}],
+            "agents": [{"type": "intake"}],
+        }
+    )
+    pack = PackService(db_session).register("http://localhost:9", manifest)
+    assert pack.routes == [{"prefix": "/autoparts", "service": "autoparts"}]
+    data = PackService(db_session).to_dict(pack)
+    assert data["routes"] == [{"prefix": "/autoparts", "service": "autoparts"}]
+
+
 def test_enable_requires_active_dependency(db_session, pack_server, monkeypatch):
     monkeypatch.setattr(settings, "pack_base_urls", [pack_server])
     service = PackService(db_session)

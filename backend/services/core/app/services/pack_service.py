@@ -149,6 +149,7 @@ class PackService:
                 dependencies=manifest.model_dump(mode="json")["dependencies"],
                 checksum=manifest.checksum or compute_checksum(manifest),
                 signature=manifest.signature,
+                routes=manifest.model_dump(mode="json")["routes"],
                 state=PackState.installed,
                 is_active=False,
             )
@@ -173,6 +174,7 @@ class PackService:
             existing.dependencies = manifest.model_dump(mode="json")["dependencies"]
             existing.checksum = manifest.checksum or compute_checksum(manifest)
             existing.signature = manifest.signature
+            existing.routes = manifest.model_dump(mode="json")["routes"]
             pack = existing
 
         self.db.commit()
@@ -350,4 +352,5 @@ class PackService:
             ),
             "last_health_ok": pack.last_health_ok,
             "config": pack.config or {},
+            "routes": pack.routes,
         }

@@ -52,6 +52,19 @@ class PackDependency(BaseModel):
     version_req: str = ">=0.0.0"
 
 
+class PackRoute(BaseModel):
+    """An external API namespace a pack exposes through the core gateway.
+
+    Sprint 5.8.1: the frontend knows a single core address; core routes
+    ``/api/v1{prefix}/...`` to the pack's own service over the internal
+    contract. ``prefix`` is the public namespace (e.g. ``/autoparts``),
+    ``service`` is the registered pack name it routes to.
+    """
+
+    prefix: str = Field(pattern=r"^/[a-zA-Z0-9_-]+$")
+    service: str = Field(min_length=1, max_length=80)
+
+
 class PackManifest(BaseModel):
     """Validated contents of a pack's manifest.yaml.
 
@@ -79,6 +92,10 @@ class PackManifest(BaseModel):
     workflows: list[PackWorkflow] = Field(default_factory=list)
     tools: list[str] = Field(default_factory=list)
 
+    # Sprint 5.8.1: API namespaces core exposes for this pack through the
+    # platform gateway. Empty list means the pack ships no public API.
+    routes: list[PackRoute] = Field(default_factory=list)
+
     required_core_version: str = ">=0.0.0"
 
     def agent_types(self) -> list[str]:
@@ -89,6 +106,9 @@ class PackManifest(BaseModel):
 
     def dependency_names(self) -> list[str]:
         return [d.name for d in self.dependencies]
+
+    def route_prefixes(self) -> list[str]:
+        return [r.prefix for r in self.routes]
 
     def check_core_compatible(self, core_version: str) -> bool:
         """True when ``core_version`` satisfies ``required_core_version``."""
@@ -161,6 +181,15 @@ def _validate_semantics(manifest: PackManifest) -> None:
     names = manifest.agent_types()
     if len(names) != len(set(names)):
         raise ManifestError("agents: имена агентов не уникальны.")
+    prefixes = manifest.route_prefixes()
+    if len(prefixes) != len(set(prefixes)):
+        raise ManifestError("routes: префиксы не уникальны.")
+    for route in manifest.routes:
+        if route.service != manifest.name:
+            raise ManifestError(
+                f"routes: service {route.service!r} должен совпадать с именем "
+                f"пака {manifest.name!r}."
+            )
     for dep in manifest.dependencies:
         if not dep.version_req or not _is_requirement(dep.version_req):
             raise ManifestError(

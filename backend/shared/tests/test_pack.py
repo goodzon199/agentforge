@@ -146,3 +146,53 @@ def test_compute_checksum_stable_and_deterministic():
         {"name": "x", "version": "1.0.0", "checksum": "zzz", "signature": "yyy"}
     )
     assert compute_checksum(manifest2) == checksum
+
+
+def test_routes_parsed():
+    manifest = parse_manifest(
+        {
+            "name": "autoparts",
+            "version": "1.0.0",
+            "routes": [
+                {"prefix": "/autoparts", "service": "autoparts"},
+                {"prefix": "/autoparts-admin", "service": "autoparts"},
+            ],
+        }
+    )
+    assert manifest.route_prefixes() == ["/autoparts", "/autoparts-admin"]
+
+
+def test_duplicate_route_prefixes_rejected():
+    with pytest.raises(ManifestError):
+        parse_manifest(
+            {
+                "name": "x",
+                "version": "1.0.0",
+                "routes": [
+                    {"prefix": "/x", "service": "x"},
+                    {"prefix": "/x", "service": "x"},
+                ],
+            }
+        )
+
+
+def test_route_service_must_match_pack_name():
+    with pytest.raises(ManifestError):
+        parse_manifest(
+            {
+                "name": "x",
+                "version": "1.0.0",
+                "routes": [{"prefix": "/other", "service": "other"}],
+            }
+        )
+
+
+def test_route_prefix_must_be_slash_led():
+    with pytest.raises(ManifestError):
+        parse_manifest(
+            {
+                "name": "x",
+                "version": "1.0.0",
+                "routes": [{"prefix": "x", "service": "x"}],
+            }
+        )
