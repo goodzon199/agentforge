@@ -34,3 +34,44 @@ def select_count(model):
 def test_internal_health_requires_token(client):
     response = client.get("/internal/health")
     assert response.status_code == 401
+
+
+def test_login_throttle_keys_are_redis_namespaced(monkeypatch):
+    from app.core.rate_limit import LoginThrottle
+
+    assert LoginThrottle._ip_key("1.2.3.4") == "agentos:auth:ip:1.2.3.4"
+    assert LoginThrottle._fail_key("Admin@AgentOS.local") == "agentos:auth:user:admin@agentos.local"
+    assert LoginThrottle._lock_key("Admin@AgentOS.local") == "agentos:auth:lock:admin@agentos.local"
+
+
+def test_login_throttle_locks_after_failures(db_session):
+    import uuid
+
+    from app.core.config import settings
+    from app.core.rate_limit import LoginThrottle
+
+    throttle = LoginThrottle()
+    email = f"user-{uuid.uuid4().hex[:8]}@agentos.local"
+    assert throttle.is_locked(email) is False
+    for _ in range(settings.login_failures_before_lock):
+        throttle.record_failure(email)
+    assert throttle.is_locked(email) is True
+    throttle.record_success(email)
+    assert throttle.is_locked(email) is False
+    throttle.limiter.clear(throttle._fail_key(email))
+    throttle.clear_state_for_test()
+
+
+def test_login_throttle_ip_budget(db_session):
+    import uuid
+
+    from app.core.config import settings
+    from app.core.rate_limit import LoginThrottle
+
+    throttle = LoginThrottle()
+    ip = f"198.51.{uuid.uuid4().hex[:8]}"  # unique per run (Redis keys persist between runs)
+    allowed = sum(throttle.request_allowed(ip) for _ in range(settings.login_rate_per_minute + 5))
+    assert allowed == settings.login_rate_per_minute
+    assert throttle.request_allowed(ip) is False
+    throttle.limiter.clear(throttle._ip_key(ip))
+    throttle.clear_state_for_test()

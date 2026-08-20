@@ -110,8 +110,31 @@ class RateLimiter:
 class LoginThrottle:
     """Brute-force protection for the login endpoint.
 
-    Per-IP request budget plus a per-account failure counter that locks the
-    account out once N failures accumulate inside the lock window.
+    State lives in Redis (``agentos:auth:*``) so every core instance shares the
+    same view: a per-IP request budget plus a per-account failure counter that
+    atomically locks the account once N failures accumulate inside the lock
+    window. An in-memory fallback exists only for tests / when Redis is down;
+    it is process-local and never used when Redis is reachable.
+    """
+
+    _IP_KEY = "agentos:auth:ip:{ip}"
+    _FAIL_KEY = "agentos:auth:user:{email}"
+    _LOCK_KEY = "agentos:auth:lock:{email}"
+
+    # Atomically increment the failure counter (TTL set on first hit), and when
+    # the threshold is crossed set the lock key with the lock TTL. Returns
+    # {failures, locked}.
+    _FAIL_SCRIPT = """
+    local fails = redis.call('INCR', KEYS[1])
+    if fails == 1 then
+        redis.call('EXPIRE', KEYS[1], ARGV[1])
+    end
+    local locked = 0
+    if fails >= tonumber(ARGV[2]) then
+        redis.call('SET', KEYS[2], 1, 'EX', ARGV[1])
+        locked = 1
+    end
+    return {fails, locked}
     """
 
     def __init__(self, limiter: RateLimiter | None = None) -> None:
@@ -119,37 +142,64 @@ class LoginThrottle:
         from app.core.config import settings
 
         self._s = settings
+        self._fail_script = None
+
+    @staticmethod
+    def _ip_key(ip: str) -> str:
+        return LoginThrottle._IP_KEY.format(ip=ip)
 
     @staticmethod
     def _fail_key(email: str) -> str:
-        return f"rate:login:fail:{email.lower()}"
+        return LoginThrottle._FAIL_KEY.format(email=email.lower())
 
     @staticmethod
     def _lock_key(email: str) -> str:
-        return f"rate:login:lock:{email.lower()}"
+        return LoginThrottle._LOCK_KEY.format(email=email.lower())
 
     def request_allowed(self, ip: str) -> bool:
+        """Per-IP attempt budget inside the rate window (atomic INCR+EXPIRE)."""
         return self.limiter.hit(
-            f"rate:login:ip:{ip}",
+            self._ip_key(ip),
             self._s.login_rate_per_minute,
             self._s.login_rate_window_seconds,
         )
 
     def is_locked(self, email: str) -> bool:
+        """True when the account is currently locked out (lock key exists)."""
         return self.limiter.get(self._lock_key(email)) is not None
 
     def record_failure(self, email: str) -> None:
-        key = self._fail_key(email)
-        # Each failure is one hit inside the lock window. Once the budget is
-        # exhausted the account is locked out.
-        allowed = self.limiter.hit(
-            key, self._s.login_failures_before_lock, self._s.login_lock_seconds
+        """Atomically count a failed attempt and lock the account on threshold.
+
+        All replicas see the same counter because the increment and the lock
+        decision happen in one Redis script.
+        """
+        fail_key = self._fail_key(email)
+        lock_key = self._lock_key(email)
+        client = self.limiter._redis.raw_client
+        if client is not None:
+            try:
+                if self._fail_script is None:
+                    self._fail_script = client.register_script(self._FAIL_SCRIPT)
+                fails, locked = self._fail_script(
+                    keys=[fail_key, lock_key],
+                    args=[self._s.login_lock_seconds, self._s.login_failures_before_lock],
+                )
+                return
+            except Exception:
+                pass  # fall through to the local approximation
+        # Local fallback (Redis down / tests): count in-process, same semantics.
+        self.limiter.hit(
+            fail_key, self._s.login_failures_before_lock, self._s.login_lock_seconds
         )
-        if not allowed or self.limiter.count(key) >= self._s.login_failures_before_lock:
-            self.limiter.set(
-                self._lock_key(email), 1, ttl_seconds=self._s.login_lock_seconds
-            )
+        if self.limiter.count(fail_key) >= self._s.login_failures_before_lock:
+            self.limiter.set(lock_key, 1, ttl_seconds=self._s.login_lock_seconds)
 
     def record_success(self, email: str) -> None:
+        """Reset the failure counter and any lock after a successful login."""
         self.limiter.clear(self._fail_key(email))
         self.limiter.clear(self._lock_key(email))
+
+    def clear_state_for_test(self) -> None:
+        """Reset all in-memory throttle state (test isolation helper)."""
+        self.limiter._local.clear()
