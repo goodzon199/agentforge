@@ -43,6 +43,33 @@ def internal_health() -> dict[str, str]:
     return {"status": "ok", "service": "beauty"}
 
 
+@router.get("/metrics")
+def internal_metrics() -> dict[str, Any]:
+    """Pack metrics over the internal contract (sprint 5.8.2).
+
+    The Beauty pack has no database, so its numbers are derived from the
+    in-memory salon calendar: bookings made, revenue at catalog prices and
+    the number of bookable services.
+    """
+    from app.salon import SERVICES
+    from app.salon import state as salon_state
+
+    bookings = list(salon_state._bookings.values())
+    revenue = sum(
+        SERVICES[b.service_key].price_rub
+        for b in bookings
+        if b.service_key in SERVICES
+    )
+    return {
+        "namespace": "beauty",
+        "metrics": {
+            "appointments": len(bookings),
+            "revenue": revenue,
+            "services": len(SERVICES),
+        },
+    }
+
+
 @router.get("/pack/manifest")
 def pack_manifest() -> dict[str, Any]:
     """Expose manifest.yaml to core for discovery (sprint 5.1)."""

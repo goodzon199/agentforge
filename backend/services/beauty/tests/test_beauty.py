@@ -177,6 +177,47 @@ def test_booking_pipeline_workflow_file_validates():
     assert workflow.node("classify").branches == {"true": "calendar", "false": "human"}
 
 
+def test_internal_metrics_requires_token():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    response = TestClient(app).get("/internal/metrics")
+    assert response.status_code == 401
+
+
+def test_internal_metrics_shape():
+    from fastapi.testclient import TestClient
+    from shared.internal import internal_token
+
+    from app.main import app
+
+    state._slots = []
+    state._bookings = {}
+    _run(
+        "calendar",
+        "",
+        {"day": "2026-08-25", "service": "haircut"},
+    )
+    booking = _run(
+        "booking",
+        "",
+        {"slot": _run("calendar", "", {"day": "2026-08-25", "service": "haircut"}).data["slot"], "customer_name": "Ирина", "service": "haircut"},
+    )
+    assert booking.data["booking_id"]
+
+    response = TestClient(app).get(
+        "/internal/metrics",
+        headers={"X-Internal-Token": internal_token()},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["namespace"] == "beauty"
+    assert payload["metrics"]["appointments"] == 1
+    assert payload["metrics"]["revenue"] == 1500
+    assert payload["metrics"]["services"] == 4
+
+
 def _booking(customer: str) -> dict:
     slot_out = _run("calendar", "", {"day": "2026-08-25", "service": "haircut"})
     out = _run(

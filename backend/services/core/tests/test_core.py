@@ -75,3 +75,73 @@ def test_login_throttle_ip_budget(db_session):
     assert throttle.request_allowed(ip) is False
     throttle.limiter.clear(throttle._ip_key(ip))
     throttle.clear_state_for_test()
+
+
+def test_pilot_aggregates_pack_metrics(db_session, monkeypatch):
+    """Core rolls up /internal/metrics from active packs into /analytics/pilot."""
+    import uuid
+
+    from app.models import Pack
+    from app.services.analytics_service import AnalyticsService
+
+    monkeypatch.setattr(
+        "shared.internal.internal_get",
+        lambda *args, **kwargs: {
+            "namespace": "autoparts",
+            "metrics": {
+                "suppliers": {"attempts_total": 100, "success_rate": 97.4},
+                "orders": 5,
+                "revenue": 250000.0,
+                "quotes_sent": 12,
+                "part_requests_total": 30,
+            },
+        },
+    )
+    db_session.add(
+        Pack(
+            id=uuid.uuid4(),
+            name="autoparts",
+            version="1.0.0",
+            display_name="AutoParts",
+            base_url="http://autoparts:8012",
+            is_active=True,
+        )
+    )
+    db_session.commit()
+
+    data = AnalyticsService(db_session).pilot(company_id=uuid.uuid4(), days=7)
+    assert data["packs"][0]["status"] == "ok"
+    assert data["packs"][0]["namespace"] == "autoparts"
+    assert data["orders_total"] == 5
+    assert data["quotes_sent"] == 12
+    assert data["part_requests_total"] == 30
+    assert data["revenue"] == "250000.00"
+    assert data["suppliers"]["attempts_total"] == 100
+    assert data["suppliers"]["failure_rate"] == 2.6
+
+
+def test_pilot_reports_unavailable_pack(db_session):
+    """A registered but unreachable pack is reported as unavailable, not null."""
+    import uuid
+
+    from app.models import Pack
+    from app.services.analytics_service import AnalyticsService
+
+    db_session.add(
+        Pack(
+            id=uuid.uuid4(),
+            name="deadpack",
+            version="1.0.0",
+            display_name="Dead Pack",
+            base_url="http://127.0.0.1:1",  # nothing listens here
+            is_active=True,
+        )
+    )
+    db_session.commit()
+
+    data = AnalyticsService(db_session).pilot(company_id=uuid.uuid4(), days=7)
+    assert data["packs"][0]["status"] == "unavailable"
+    assert data["packs"][0]["namespace"] == "deadpack"
+    assert data["orders_total"] == 0
+    assert data["revenue"] == "0.00"
+    assert data["suppliers"]["attempts_total"] == 0

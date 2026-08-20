@@ -672,6 +672,20 @@ export type LlmStats = {
   available: boolean;
 };
 
+export type PackMetricsEntry = {
+  namespace: string;
+  status: "ok" | "unavailable";
+  metrics?: {
+    suppliers?: { attempts_total: number; success_rate: number | null };
+    orders?: number;
+    revenue?: number;
+    quotes_sent?: number;
+    part_requests_total?: number;
+    appointments?: number;
+    services?: number;
+  } | null;
+};
+
 export type PilotAnalytics = {
   period_days: number;
   requests_total: number;
@@ -693,6 +707,7 @@ export type PilotAnalytics = {
   task_timeouts: number;
   assist?: AssistStats | null;
   sprint39?: Sprint39Report | null;
+  packs?: PackMetricsEntry[];
 };
 
 export type Sprint39Report = {

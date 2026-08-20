@@ -81,6 +81,8 @@ class AnalyticsService:
 
         response = self._response_times(customer_messages)
 
+        packs = self._pack_metrics()
+
         return {
             "period_days": days,
             "requests_total": len(customer_messages),
@@ -110,6 +112,93 @@ class AnalyticsService:
             "task_timeouts": self._task_timeouts(since),
             "reliability": self._reliability(since),
             "assist": self._assist(company_id, since),
+            "packs": packs,
+            **self._aggregate_pack_business(packs),
+        }
+
+    # --- Pack metrics (sprint 5.8.2) ---------------------------------------
+
+    def _pack_metrics(self) -> list[dict[str, Any]]:
+        """Fetch each active pack's ``/internal/metrics``.
+
+        A pack that is registered but unreachable is reported as
+        ``{"status": "unavailable"}`` — never ``None`` — so the dashboard can
+        distinguish "no data yet" from "pack is down".
+        """
+        from shared.internal import internal_get
+
+        from app.models import Pack
+
+        packs = self.db.scalars(
+            select(Pack).where(Pack.is_active.is_(True))
+        ).unique().all()
+        result: list[dict[str, Any]] = []
+        for pack in packs:
+            try:
+                data = internal_get(pack.base_url, "/internal/metrics", timeout=5.0)
+            except Exception:
+                result.append({"namespace": pack.name, "status": "unavailable"})
+                continue
+            result.append(
+                {
+                    "namespace": data.get("namespace", pack.name),
+                    "status": "ok",
+                    "metrics": data.get("metrics", {}),
+                }
+            )
+        return result
+
+    @staticmethod
+    def _aggregate_pack_business(
+        packs: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Roll up business numbers from the pack metric contract.
+
+        Only packs that answered with metrics contribute; an unavailable pack
+        contributes nothing (its own entry still carries the status).
+        """
+        revenue = 0.0
+        orders_total = 0
+        quotes_sent = 0
+        part_requests_total = 0
+        attempts_total = 0
+        success_weighted = 0.0
+        for entry in packs:
+            if entry.get("status") != "ok":
+                continue
+            metrics = entry.get("metrics") or {}
+            revenue += float(metrics.get("revenue") or 0)
+            orders_total += int(metrics.get("orders") or 0)
+            quotes_sent += int(metrics.get("quotes_sent") or 0)
+            part_requests_total += int(metrics.get("part_requests_total") or 0)
+            suppliers = metrics.get("suppliers") or {}
+            attempts = int(suppliers.get("attempts_total") or 0)
+            attempts_total += attempts
+            success_weighted += attempts * float(suppliers.get("success_rate") or 0)
+        success_rate = (
+            round(success_weighted / attempts_total, 1) if attempts_total else None
+        )
+        return {
+            "revenue": f"{revenue:.2f}",
+            "gross_profit": None,
+            "orders_total": orders_total,
+            "quotes_sent": quotes_sent,
+            "part_requests_total": part_requests_total,
+            "suppliers": {
+                "attempts_total": attempts_total,
+                "attempts_failed": (
+                    round(attempts_total * (100 - success_rate) / 100)
+                    if success_rate is not None
+                    else 0
+                ),
+                "failure_rate": (
+                    round(100 - success_rate, 1)
+                    if success_rate is not None
+                    else None
+                ),
+                "avg_latency_ms": None,
+                "p95_latency_ms": None,
+            },
         }
 
     # --- Internals ---------------------------------------------------------

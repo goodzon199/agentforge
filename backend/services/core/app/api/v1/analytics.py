@@ -25,6 +25,20 @@ class PipelineStageStats(BaseModel):
     on_sla_pct: float | None = None
 
 
+class PackMetrics(BaseModel):
+    namespace: str
+    status: str
+    metrics: dict[str, Any] | None = None
+
+
+class SupplierStats(BaseModel):
+    attempts_total: int
+    attempts_failed: int
+    failure_rate: float | None = None
+    avg_latency_ms: float | None = None
+    p95_latency_ms: float | None = None
+
+
 class PilotAnalytics(BaseModel):
     period_days: int
     requests_total: int
@@ -39,6 +53,13 @@ class PilotAnalytics(BaseModel):
     task_timeouts: int
     reliability: dict[str, Any]
     assist: dict[str, Any] | None = None
+    packs: list[PackMetrics] = []
+    revenue: str | None = None
+    gross_profit: str | None = None
+    orders_total: int = 0
+    quotes_sent: int = 0
+    part_requests_total: int = 0
+    suppliers: SupplierStats | None = None
 
 
 @router.get("/pilot", response_model=PilotAnalytics)

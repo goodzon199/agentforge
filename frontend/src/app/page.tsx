@@ -364,7 +364,7 @@ export default function DashboardPage() {
                 <StatCard label="Всего отправок" value={analytics.data.assist?.sends_total ?? 0} />
               </div>
 
-              <div className="mt-6 grid gap-4 lg:grid-cols-2">
+              <div className="mt-6 grid gap-4 lg:grid-cols-3">
                 <div className="card p-5">
                   <h3 className="text-sm font-medium text-slate-300">Конвейер и SLA</h3>
                   <div className="mt-4 space-y-3">
@@ -385,6 +385,30 @@ export default function DashboardPage() {
                         </div>
                       );
                     })}
+                  </div>
+                </div>
+
+                <div className="card p-5">
+                  <h3 className="text-sm font-medium text-slate-300">Пакеты платформы</h3>
+                  <div className="mt-4 space-y-3 text-sm">
+                    {analytics.data.packs && analytics.data.packs.length > 0 ? (
+                      analytics.data.packs.map((p) => (
+                        <div key={p.namespace} className="flex items-center justify-between">
+                          <span className="text-slate-200">{p.namespace}</span>
+                          {p.status === "unavailable" ? (
+                            <span className="badge bg-rose-500/15 text-rose-400">недоступен</span>
+                          ) : (
+                            <span className="text-slate-400">
+                              {p.metrics?.orders != null ? `${p.metrics.orders} заказов · ` : ""}
+                              {p.metrics?.appointments != null ? `${p.metrics.appointments} записей · ` : ""}
+                              {p.metrics?.revenue != null ? `${p.metrics.revenue} ₽` : "—"}
+                            </span>
+                          )}
+                        </div>
+                      ))
+                    ) : (
+                      <span className="text-slate-500">Активных пакетов нет</span>
+                    )}
                   </div>
                 </div>
 

@@ -9,10 +9,12 @@ from pydantic import BaseModel
 from shared.agents import run_agent
 from shared.internal import require_internal_token
 from shared.pack import ManifestError, load_manifest
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models import Conversation, PartRequest, Quote
+from app.models import Conversation, Order, PartRequest, Quote, SupplierSearchAttempt
+from app.models.enums import QuoteStatus, SupplierAttemptStatus
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +187,67 @@ def quote_send(payload: QuoteSendRequest, db: Session = Depends(get_db)) -> dict
 @router.get("/health")
 def internal_health() -> dict[str, str]:
     return {"status": "ok", "service": "autoparts"}
+
+
+@router.get("/metrics")
+def internal_metrics(db: Session = Depends(get_db)) -> dict[str, Any]:
+    """Pack metrics over the internal contract (sprint 5.8.2).
+
+    Core aggregates these into the platform ``/analytics/pilot`` response so
+    domain business numbers (suppliers, orders, revenue) are computed where
+    the data lives instead of being mirrored into the core database.
+    """
+    attempts_total = int(
+        db.scalar(select(func.count()).select_from(SupplierSearchAttempt)) or 0
+    )
+    attempts_failed = int(
+        db.scalar(
+            select(func.count())
+            .select_from(SupplierSearchAttempt)
+            .where(SupplierSearchAttempt.status == SupplierAttemptStatus.failed)
+        )
+        or 0
+    )
+    success_rate = (
+        round((attempts_total - attempts_failed) / attempts_total * 100, 1)
+        if attempts_total
+        else None
+    )
+    orders_total = int(
+        db.scalar(select(func.count()).select_from(Order)) or 0
+    )
+    revenue = float(db.scalar(select(func.coalesce(func.sum(Order.order_total), 0))) or 0)
+    part_requests_total = int(
+        db.scalar(select(func.count()).select_from(PartRequest)) or 0
+    )
+    sent_states = {
+        QuoteStatus.sent,
+        QuoteStatus.accepted,
+        QuoteStatus.rejected,
+        QuoteStatus.expired,
+        QuoteStatus.converted_to_order,
+    }
+    quotes_sent = int(
+        db.scalar(
+            select(func.count())
+            .select_from(Quote)
+            .where(Quote.status.in_(sent_states))
+        )
+        or 0
+    )
+    return {
+        "namespace": "autoparts",
+        "metrics": {
+            "suppliers": {
+                "attempts_total": attempts_total,
+                "success_rate": success_rate,
+            },
+            "orders": orders_total,
+            "revenue": round(revenue, 2),
+            "quotes_sent": quotes_sent,
+            "part_requests_total": part_requests_total,
+        },
+    }
 
 
 @router.get("/pack/manifest")
