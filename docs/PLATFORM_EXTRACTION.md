@@ -547,3 +547,141 @@ approvals/usage), registry с metadata/checksum/зависимостями и me
 workflow-attribution работают end-to-end на живых сервисах (core:8011,
 autoparts:8012, beauty:8013) и покрыты тестами.
 
+---
+
+## 16. Sprint 5.8.1 — Platform Gateway (единый API-адрес для фронта)
+
+### Задача
+
+Фронт ходит на один адрес `http://localhost:8011/api/v1`, а не на три порта.
+Любой маршрут `GET/POST /api/v1/{pack}/{path}` проксируется на владеющего пака
+через `pack.base_url`.
+
+### Реализация (`core/app/api/v1/gateway.py`)
+
+- catch-all роутер `/{pack_name}/{path:path}`, регистрируется в `router.py`
+  ПОСЛЕ статичных роутеров core — core-маршруты выигрывают
+- резолв пака по имени; 404 если пак не найден/не active
+- прокси через `httpx.AsyncClient` → `{base_url}/api/v1/{path}`, timeout 60s
+- ответ: status/headers/body прозрачно; ошибки пак-сервиса → 502 с detail
+- JWT не переносится: пак-сервисы аутентифицируют свой пользовательский домен
+  (см. 5.8.1a) — platform gateway обслуживает консольные пути core
+- фронт: `NEXT_PUBLIC_API_URL=http://localhost:8011/api/v1` (один адрес)
+
+### Live E2E (core:8011 / autoparts:8012 / beauty:8013)
+
+- `/api/v1/autoparts/health` вне `/api/v1`-схемы пака → 404
+- `/api/v1/autoparts/{...}` → 401 без валидного для пака токена (не путать с
+  рабочим путём: агенты паков ходят через `/internal/agents/execute`,
+  workflow-прогоны — через core `/api/v1/workflows`)
+
+---
+
+## 17. Sprint 5.8.1a — Auth Throttling (Redis)
+
+### Реализация (`core/app/api/deps.py`, `core/app/api/v1/auth.py`)
+
+- tаргет: логин/смена пароля; бэкенд Redis (`backend=redis` в circuit breaker)
+- окно + лимит (например 5 попыток/мин) по `client_ip` (X-Forwarded-For → remote)
+- при превышении — 429 с Retry-After; счётчики хранятся в Redis с TTL
+- тесты `tests/test_auth_throttle.py` — превышение лимита, сброс после окна
+
+---
+
+## 18. Sprint 5.8.2 — Pack Metrics contract + Pilot aggregation
+
+### Задача
+
+Оператор видит в консоли агрегированные метрики вертикалей (pack) и сквозную
+аналитику pilot (chat-воронка, LLM, reliability, packs).
+
+### Реализация
+
+- пак-сервисы отдают `GET /internal/metrics` (внутренний роут, token-gated):
+  - autoparts: `suppliers{attempts_total,success_rate}`, `orders`, `revenue`,
+    `quotes_sent`, `part_requests_total`
+  - beauty: `appointments`, `revenue`, `services`
+- core `analytics_service.pilot(days)` опрашивает каждый active-пак
+  (`/internal/metrics`) + считает платформенные блоки: pipeline (по задачам
+  customer_message), LLM (calls/failures/available), reliability
+  (circuit breakers из Redis, dead_tasks, replays, failures_by_kind), assist
+  (sends_total/auto_sends/manager_edit_rate), packs[].metrics, revenue/orders
+- endpoint `GET /api/v1/analytics/pilot?days=7` (роут `analytics`)
+- тесты `tests/test_analytics_service.py` — агрегация с мок-паком
+
+### Live E2E (после полного workflow-прогона)
+
+```json
+"packs": [
+  {"namespace": "autoparts", "status": "ok",
+   "metrics": {"suppliers": {"attempts_total": 30, "success_rate": 96.7},
+               "orders": 27, "revenue": 164580.0, "quotes_sent": 0,
+               "part_requests_total": 6}},
+  {"namespace": "beauty", "status": "ok",
+   "metrics": {"appointments": 1, "revenue": 1500, "services": 4}}
+],
+"revenue": "166080.00", "orders_total": 27
+```
+
+---
+
+## 19. DoD 5.0 — чистый пересбор микросервисного стека
+
+### Пересбор (`docker-compose.services.yml`)
+
+- стоп старого монолита: `docker compose -f docker-compose.yml down` (БЕЗ `-v`,
+  volume `agentforge_ollama` с моделями переиспользован через `external: true`)
+- `agentforge_pgdata` удалён отдельно — обе БД поднимаются с нуля
+- образы: `build --no-cache` (6 образов: db-core, db-autoparts, redis, ollama,
+  mailhog, frontend, core-api, autoparts-api, beauty-api, migrate-*)
+- одноразовые `migrate-core` / `migrate-autoparts` (`restart: "no"`):
+  `alembic upgrade head && python -c "seed_demo(...)"` — exit 0; API-сервисы
+  ждут их через `depends_on: condition: service_completed_successfully`
+- миграции с нуля подтверждены: core — 6 ревизий до head `9c1e5f6a7b8c`
+  (add pack routes), autoparts — до head `27f635876c13` (autoparts initial)
+
+### E2E-прогон (все пункты чек-листа закрыты)
+
+- login → `must_change_password=true` (production) → change-password →
+  `must_change_password=false` (новый пароль сохранён в `.env`-заметке)
+- discover: autoparts 1.0.0 ok, beauty 1.0.0 ok; configure → configured;
+  enable → active (оба)
+- workflow autoparts: `POST /api/v1/workflows/autoparts/sales_pipeline/run`
+  → intake → search (векторный поиск, MANN W 712/52 и др.) → pricing →
+  `awaiting_approval` на human-узле `approval`
+- human approval: `GET /api/v1/platform/approvals` → 1 `workflow_human`
+  risk=MEDIUM → `POST /platform/approvals/{id}/approve` → status=executed,
+  decided=approved
+- workflow beauty: `booking_pipeline` run → reception (extract service=haircut,
+  day=2026-08-21) → classify → calendar (слот 09:00 найден) → slot_check →
+  booking (booking_id создан) → sales (1500₽ + апселл +800₽) → reminder → done
+- usage: tasks=6, approvals_decided=1, llm_calls=2/tokens=449, workflow_runs=5,
+  by_pack=[beauty×4, autoparts×1] (оба 1.0.0, active)
+- traces: 2 записи (manual_task completed span_count=4; customer_message failed
+  span_count=3 — известный кейс, см. блокер ниже)
+- audit: `user.change_password` с actor/ip/user_agent/detail
+- pilot analytics: оба пака `status: ok`, beauty appointments/revenue учтены
+- **restart стека** → состояние сохранено: паки active, tasks=6, workflow_runs=5,
+  autoparts orders=27/revenue сохранены в БД; beauty (in-memory, без БД) — его
+  metrics/appointments сбрасываются на 0 (ожидаемое поведение демо-пака)
+
+### Блокер (известное ограничение)
+
+- chat-путь через `POST /api/v1/public/chat/messages` (objective=
+  `process_customer_message`) падает: «Агент для IntakeAgent не найден в базе».
+  Причина: `orchestrator._resolve_agent_by_type` ищет `AgentRecord` в core-БД по
+  slug `{type}-agent` (`intake-agent`), а при register/configure/enable пака
+  записи `AgentRecord` для агентов пака НЕ создаются (агенты живут только в
+  `pack.agents`/манифесте). Рабочий E2E-путь вертикалей — workflow API
+  (`/api/v1/workflows/{pack}/{workflow}/run`), он резолвит агентов через
+  `_pack_for_agent` по манифесту и не зависит от AgentRecord. Следующий шаг:
+  либо создавать AgentRecord при enable пака, либо fallback-резолв по активному
+  пак-манифесту в `_resolve_agent_by_type`.
+
+### Итог
+
+Полный цикл «чистый пересбор → миграции с нуля → регистрация/настройка/включение
+паков → workflow-вертикали с human approval → usage/traces/audit/pilot → restart
+с сохранением состояния» проходит на живом микросервисном стеке (core:8011,
+autoparts:8012, beauty:8013, frontend:3000).
+

@@ -1,9 +1,14 @@
 name: agentforge-services
 
-# Sprint 5.0 microservices: core (platform) + autoparts (domain) with
-# separate databases. Build context is ./backend so each Dockerfile can
-# install the shared contract package. Runtime env mirrors the monolith:
-# ollama/redis/mailhog stay shared across both services.
+# Sprint 5.x microservices: core (platform/gateway) + autoparts + beauty
+# (domain packs) with separate databases. Build context is ./backend so each
+# Dockerfile can install the shared contract package. Runtime env mirrors the
+# monolith: ollama/redis/mailhog stay shared across services.
+#
+# DoD 5.0: both databases bootstrap from empty via one-shot `migrate-*`
+# services running `alembic upgrade head` + an explicit seed; the APIs then
+# start in production mode (DB_AUTO_CREATE=False) and verify head==current.
+# Core is the single address for the frontend (port 8011).
 
 services:
   db-core:
@@ -82,6 +87,48 @@ services:
       timeout: 10s
       retries: 30
 
+  # One-shot schema bootstrap (DoD 5.0): empty DB -> alembic upgrade head.
+  # Runs before core-api and exits. Uses the core image so alembic/ and the
+  # shared package are already installed.
+  migrate-core:
+    build:
+      context: ./backend
+      dockerfile: services/core/Dockerfile
+    container_name: agentos-migrate-core
+    restart: "no"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-agentos}:${POSTGRES_PASSWORD:-agentos_secret}@db-core:5432/${POSTGRES_DB:-agentos_core}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@agentos.local}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-admin123}
+    command: ["sh", "-c", "alembic upgrade head && python -c \"from app.core.database import SessionLocal; from app.core.seeding import seed_demo; db = SessionLocal(); seed_demo(db); db.close()\""]
+    depends_on:
+      db-core:
+        condition: service_healthy
+
+  # One-shot schema bootstrap for the autoparts pack (DoD 5.0).
+  migrate-autoparts:
+    build:
+      context: ./backend
+      dockerfile: services/autoparts/Dockerfile
+    container_name: agentos-migrate-autoparts
+    restart: "no"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-agentos}:${POSTGRES_PASSWORD:-agentos_secret}@db-autoparts:5432/${POSTGRES_DB:-agentos_autoparts}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@agentos.local}
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-admin123}
+    command: ["sh", "-c", "alembic upgrade head && python -c \"from app.core.database import SessionLocal; from app.core.seeding import seed_demo; db = SessionLocal(); seed_demo(db); db.close()\""]
+    depends_on:
+      db-autoparts:
+        condition: service_healthy
+
   core-api:
     build:
       context: ./backend
@@ -110,13 +157,19 @@ services:
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@agentos.local}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-admin123}
       ENVIRONMENT: ${ENVIRONMENT:-development}
-      AUTOPARTS_INTERNAL_URL: http://autoparts-api:8010
+      AUTOPARTS_INTERNAL_URL: http://autoparts-api:8000
+      PACK_BASE_URLS: '["http://autoparts-api:8000","http://beauty-api:8000"]'
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-dev-internal-token-change-me}
     ports:
-      - "${CORE_API_PORT:-8010}:8000"
+      - "${CORE_API_PORT:-8011}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     depends_on:
-      db-core:
-        condition: service_healthy
+      migrate-core:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       ollama:
@@ -124,6 +177,8 @@ services:
       mailhog:
         condition: service_healthy
       autoparts-api:
+        condition: service_started
+      beauty-api:
         condition: service_started
 
   autoparts-api:
@@ -156,10 +211,15 @@ services:
       ENVIRONMENT: ${ENVIRONMENT:-development}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-dev-internal-token-change-me}
     ports:
-      - "${AUTOPARTS_API_PORT:-8011}:8000"
+      - "${AUTOPARTS_API_PORT:-8012}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     depends_on:
-      db-autoparts:
-        condition: service_healthy
+      migrate-autoparts:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
       ollama:
@@ -167,7 +227,39 @@ services:
       mailhog:
         condition: service_healthy
 
+  # Beauty pack (sprint 5.5): stateless FastAPI, no DB/Redis. Core reaches it
+  # over the /internal/* contract with the shared token.
+  beauty-api:
+    build:
+      context: ./backend
+      dockerfile: services/beauty/Dockerfile
+    container_name: agentos-beauty-api
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-dev-internal-token-change-me}
+    ports:
+      - "${BEAUTY_API_PORT:-8013}:8000"
+
+  # Frontend (Next.js standalone). One address: the core gateway (8011).
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8011/api/v1
+    container_name: agentos-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    depends_on:
+      core-api:
+        condition: service_healthy
+
 volumes:
   pgdata_core:
   pgdata_autoparts:
+  # Reuse the monolith's model cache so a clean rebuild does not re-download
+  # ~2.3 GB of Ollama models. Created by the agentforge project.
   ollama:
+    external: true
+    name: agentforge_ollama
