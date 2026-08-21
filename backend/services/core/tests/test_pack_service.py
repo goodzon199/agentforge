@@ -94,6 +94,38 @@ def test_enable_sets_active(db_session, pack_server, monkeypatch):
     assert pack.is_active is True
 
 
+def test_enable_syncs_pack_agents(db_session, pack_server, monkeypatch):
+    monkeypatch.setattr(settings, "pack_base_urls", [pack_server])
+    PackService(db_session).discover()
+    PackService(db_session).enable("autoparts")
+    from app.models import Agent
+
+    slugs = [
+        a.slug for a in db_session.scalars(select(Agent)).all()
+        if a.slug.startswith("autoparts-")
+    ]
+    assert "autoparts-search-agent" in slugs
+    assert "autoparts-intake-agent" in slugs
+
+
+def test_healthcheck_sync_is_idempotent(db_session, pack_server, monkeypatch):
+    monkeypatch.setattr(settings, "pack_base_urls", [pack_server])
+    service = PackService(db_session)
+    service.discover()
+    service.enable("autoparts")
+    service.healthcheck("autoparts")
+    service.healthcheck("autoparts")
+    from app.models import Agent
+
+    count = len(
+        [
+            a for a in db_session.scalars(select(Agent)).all()
+            if a.slug.startswith("autoparts-")
+        ]
+    )
+    assert count == 2
+
+
 def test_disable_sets_disabled(db_session, pack_server, monkeypatch):
     monkeypatch.setattr(settings, "pack_base_urls", [pack_server])
     PackService(db_session).discover()

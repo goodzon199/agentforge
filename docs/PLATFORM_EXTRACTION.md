@@ -665,18 +665,29 @@ autoparts:8012, beauty:8013) и покрыты тестами.
   autoparts orders=27/revenue сохранены в БД; beauty (in-memory, без БД) — его
   metrics/appointments сбрасываются на 0 (ожидаемое поведение демо-пака)
 
-### Блокер (известное ограничение)
+### Блокер (решён — sprint 5.8.3, chat-агенты паков)
 
 - chat-путь через `POST /api/v1/public/chat/messages` (objective=
-  `process_customer_message`) падает: «Агент для IntakeAgent не найден в базе».
-  Причина: `orchestrator._resolve_agent_by_type` ищет `AgentRecord` в core-БД по
+  `process_customer_message`) падал: «Агент для IntakeAgent не найден в базе».
+  Причина: `orchestrator._resolve_agent_by_type` искал `AgentRecord` в core-БД по
   slug `{type}-agent` (`intake-agent`), а при register/configure/enable пака
-  записи `AgentRecord` для агентов пака НЕ создаются (агенты живут только в
-  `pack.agents`/манифесте). Рабочий E2E-путь вертикалей — workflow API
-  (`/api/v1/workflows/{pack}/{workflow}/run`), он резолвит агентов через
-  `_pack_for_agent` по манифесту и не зависит от AgentRecord. Следующий шаг:
-  либо создавать AgentRecord при enable пака, либо fallback-резолв по активному
-  пак-манифесту в `_resolve_agent_by_type`.
+  записи `AgentRecord` для агентов пака НЕ создавались (агенты живут только в
+  `pack.agents`/манифесте).
+- **Фикс (sprint 5.8.3):**
+  - `PackService.enable()`/`healthcheck()` материализуют агентов манифеста в
+    `agents` под slug `{pack}-{type}-agent` (неймспейс исключает коллизию
+    `sales`/`search` между вертикалями); владелец записей — demo-компания
+  - `_resolve_agent_by_type` при отсутствии платформенного `{type}-agent`
+    падает на `_resolve_pack_agent` — первый активный пак, объявивший тип
+    (то же правило, что `_pack_base_url_for`)
+  - следствие: chat-путь доходит до IntakeAgent (autoparts) через internal
+    contract и возвращает результат, вместо `failed`/dead-letter
+- **Известное ограничение (вне фикса):** `IntakeAgent` в autoparts читает
+  `Conversation` из своей БД; диалог создаётся в core и пока не реплицируется,
+  поэтому chat-интэйк возвращает `action=not_found` для реального webchat.
+  Репликация company/customer/conversation/message core→autoparts по событию
+  `customer-message` — отдельный спринт. Рабочие E2E-пути вертикалей — workflow
+  API (`/api/v1/workflows/{pack}/{workflow}/run`) и public chat до резолва агента.
 
 ### Итог
 

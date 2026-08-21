@@ -16,7 +16,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models import Pack
+from app.models import Agent, Company, Pack
+from app.models.enums import AgentStatus, AgentType
 
 logger = logging.getLogger(__name__)
 
@@ -248,11 +249,63 @@ class PackService:
             pack.state = PackState.degraded
             self.db.commit()
             raise PackError(f"Pack {name!r} недоступен (healthcheck не прошёл).")
+        # Sprint 5.8.3: sync pack agents into core's agents table so the
+        # orchestrator can resolve remote agents by slug (chat pipeline).
+        self._sync_pack_agents(pack)
         pack.is_active = True
         pack.state = PackState.active
         self.db.commit()
         self.db.refresh(pack)
         return pack
+
+    def _sync_pack_agents(self, pack: Pack) -> None:
+        """Materialize pack agents into core's ``agents`` table.
+
+        The orchestrator resolves remote agents by slug (chat pipeline), so
+        every agent a pack declares in its manifest must exist as an
+        AgentRecord. Slugs are namespaced ``{pack}-{type}-agent`` — agent
+        types are not unique across verticals (e.g. ``sales`` in autoparts
+        and beauty). The platform demo company owns the records.
+        """
+        company = self.db.scalars(
+            select(Company).where(Company.slug == "demo")
+        ).first()
+        if company is None:
+            logger.warning(
+                "Не найдена demo-компания — агенты пака %s не созданы.", pack.name
+            )
+            return
+        for agent_meta in pack.agents or []:
+            agent_type = (agent_meta or {}).get("type")
+            if not agent_type:
+                continue
+            slug = f"{pack.name}-{agent_type}-agent"
+            existing = self.db.scalars(
+                select(Agent).where(Agent.slug == slug)
+            ).first()
+            if existing is not None:
+                continue
+            self.db.add(
+                Agent(
+                    company_id=company.id,
+                    name=agent_meta.get("display_name") or agent_type,
+                    role=f"Агент пака {pack.display_name or pack.name}",
+                    slug=slug,
+                    goal="",
+                    description="",
+                    instructions="",
+                    type=AgentType.specialized,
+                    status=AgentStatus.idle,
+                    is_active=True,
+                    model=settings.default_agent_model,
+                    temperature=settings.default_agent_temperature,
+                    tools=[],
+                )
+            )
+            logger.info(
+                "Создан агент пака %s: %s (%s)", pack.name, slug, agent_type
+            )
+        self.db.flush()
 
     def disable(self, name: str) -> Pack:
         pack = self.get(name)
@@ -312,6 +365,8 @@ class PackService:
             pack.state = PackState.degraded
         if ok and pack.state == PackState.degraded and pack.is_active:
             pack.state = PackState.active
+        if ok and pack.is_active:
+            self._sync_pack_agents(pack)
         self.db.commit()
         return {"pack": pack.name, "health": "ok" if ok else "down"}
 

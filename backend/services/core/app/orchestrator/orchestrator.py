@@ -361,9 +361,43 @@ class Orchestrator:
         return db.scalars(stmt).first()
 
     def _resolve_agent_by_type(self, db: Session, agent_type: str) -> AgentRecord | None:
-        """Resolve an agent record by its type slug convention (e.g. email -> email-agent)."""
+        """Resolve an agent record by its type slug convention (e.g. email -> email-agent).
+
+        Platform agents live under ``{type}-agent``. Agents declared by active
+        packs live under ``{pack}-{type}-agent`` (sprint 5.8.3) and are matched
+        when no platform record exists.
+        """
         stmt = select(AgentRecord).where(AgentRecord.slug == f"{agent_type}-agent")
-        return db.scalars(stmt).first()
+        record = db.scalars(stmt).first()
+        if record is not None:
+            return record
+        return self._resolve_pack_agent(db, agent_type)
+
+    def _resolve_pack_agent(self, db: Session, agent_type: str) -> AgentRecord | None:
+        """Resolve ``agent_type`` through the manifest of an active pack.
+
+        Enabling a pack materialises one AgentRecord per declared agent under
+        ``{pack}-{type}-agent``; the first active pack that declares the type
+        wins (same rule as ``_pack_base_url_for``).
+        """
+        from app.models import Pack
+        from shared.pack import PackState
+
+        packs = db.scalars(
+            select(Pack).where(
+                Pack.is_active.is_(True), Pack.state == PackState.active
+            )
+        ).all()
+        for pack in packs:
+            agent_types = [a.get("type") for a in (pack.agents or [])]
+            if agent_type not in agent_types:
+                continue
+            return db.scalars(
+                select(AgentRecord).where(
+                    AgentRecord.slug == f"{pack.name}-{agent_type}-agent"
+                )
+            ).first()
+        return None
 
     def _pack_base_url_for(self, db: Session, agent_type: str) -> str:
         """Find the pack that provides ``agent_type`` (sprint 5.1).
