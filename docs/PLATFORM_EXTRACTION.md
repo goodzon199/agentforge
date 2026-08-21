@@ -689,6 +689,82 @@ autoparts:8012, beauty:8013) и покрыты тестами.
   `customer-message` — отдельный спринт. Рабочие E2E-пути вертикалей — workflow
   API (`/api/v1/workflows/{pack}/{workflow}/run`) и public chat до резолва агента.
 
+## 20. Sprint 5.8.3 - Pack Context Contract
+
+Ограничение из раздела 19 снято: пак больше не читает core-сущности из своей
+БД. Core остаётся единственным source of truth для Company/User/Customer/
+Conversation/Message; пак получает ровно нужный контекст при remote dispatch
+и хранит только свою доменку + ссылки `core_*`.
+
+### Контракт диспетча
+
+`POST /internal/agents/execute` (core → pack) несёт, помимо `agent_type/
+objective/input_data/task_id/company_id`:
+
+```json
+{
+  "dispatch_id": "<uuid>",
+  "context": {
+    "tenant":       {"company_id": "..."},
+    "actor":        {"customer_id": "..."},
+    "conversation": {"id": "...", "channel": "web"},
+    "message":      {"id": "...", "text": "..."},
+    "history":      [{"sender_type": "...", "content": "..."}],
+    "customer_profile": {}
+  }
+}
+```
+
+SDK (`shared.agents.AgentContext`): `ctx.tenant / ctx.customer /
+ctx.conversation / ctx.message / ctx.history`. `IntakeAgent` на контрактном
+пути парсит `ctx.message.text` без SELECT Conversation; legacy-путь
+(input_data conversation_id/message_id) сохранён для workflow-запусков.
+
+### Ответ агента
+
+Пак не пишет в core-хранилище: `AgentOutput.response` возвращается по
+контракту, и core (`orchestrator._persist_agent_reply`) сохраняет его как
+`sender_type="agent"` в core-диалоге с тегом `task_id` (идемпотентно при
+replay, подавляется при human takeover). Локальный якорный диалог пака на
+контрактном пути остаётся read-only.
+
+### Якоря доменных данных (autoparts)
+
+- `domain_thread_links` — проекция треда: PK `core_conversation_id`,
+  FK на локальные conversations/customers, `core_customer_id/core_company_id/channel`.
+- `part_requests.core_conversation_id/core_message_id/core_customer_id` —
+  nullable UUID-ссылки без FK (миграция `a1c7e90d4b52`).
+- Идемпотентность: ключ — id сообщения (`processed_message_ids` в
+  structured_data заявки); повторная доставка того же `message.id`
+  возвращает `already_processed`, дубля PartRequest нет.
+- Полный отказ от локальных FK (PartRequest/Quote/Order → conversation/
+  customer) затрагивает ~15 сервисов — кандидат на 5.9.
+
+### Context API (pull-дополнение к диспетчу)
+
+`GET /internal/context/conversations/{id}` и `/customers/{id}` в core.
+Гейт: заголовок `X-Pack-Name` должен указывать на активный пак, чей манифест
+объявляет `conversation.read` / `customer.read`, иначе 403. Shared internal
+token аутентифицирует вызов; per-pack credentials — 5.9.
+
+### AgentRecord как projection
+
+Манифест — источник истины; записи в `agents` (slug `{pack}-{type}-agent`)
+— реестровая проекция для UI/правил/routing/analytics:
+- enable → материализация/реактивация; повторный enable не дублирует записи;
+- disable → проекции деактивируются (`is_active=false`, status=disabled);
+- uninstall → проекции удаляются;
+- выпавшие из манифеста типы агентов деактивируются при sync.
+
+### Проверка
+
+Тесты: core `tests/test_pack_context.py` (9: контракт пейлоада, гейты 403/200
+Context API, lifecycle проекций), autoparts
+`tests/test_intake_context_contract.py` (3: якоря+заявка, идемпотентность,
+legacy fallback). E2E на живом стеке: сообщение клиента → задача completed
+(routing engine=intake), `part_request_created`, ответ агента в core-диалоге,
+в БД пака заполнены `core_*` и `domain_thread_links`.
+
 ### Итог
 
 Полный цикл «чистый пересбор → миграции с нуля → регистрация/настройка/включение

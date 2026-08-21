@@ -266,6 +266,11 @@ class PackService:
         AgentRecord. Slugs are namespaced ``{pack}-{type}-agent`` — agent
         types are not unique across verticals (e.g. ``sales`` in autoparts
         and beauty). The platform demo company owns the records.
+
+        Sprint 5.8.3: the manifest is the source of truth; these records are
+        a registry projection (UI/permissions/routing/usage/analytics). The
+        sync re-activates records after re-enable and deactivates projections
+        whose agent type disappeared from the manifest.
         """
         company = self.db.scalars(
             select(Company).where(Company.slug == "demo")
@@ -275,15 +280,21 @@ class PackService:
                 "Не найдена demo-компания — агенты пака %s не созданы.", pack.name
             )
             return
+        declared_types: list[str] = []
         for agent_meta in pack.agents or []:
             agent_type = (agent_meta or {}).get("type")
             if not agent_type:
                 continue
+            declared_types.append(agent_type)
             slug = f"{pack.name}-{agent_type}-agent"
             existing = self.db.scalars(
                 select(Agent).where(Agent.slug == slug)
             ).first()
             if existing is not None:
+                # Re-enable a previously disabled projection.
+                if not existing.is_active:
+                    existing.is_active = True
+                    existing.status = AgentStatus.idle
                 continue
             self.db.add(
                 Agent(
@@ -305,13 +316,40 @@ class PackService:
             logger.info(
                 "Создан агент пака %s: %s (%s)", pack.name, slug, agent_type
             )
+        self._deactivate_pack_agents(pack, keep_types=declared_types)
         self.db.flush()
+
+    def _deactivate_pack_agents(
+        self, pack: Pack, *, keep_types: list[str] | None = None, delete: bool = False
+    ) -> None:
+        """Align AgentRecords with the pack lifecycle (sprint 5.8.3).
+
+        disable -> deactivate; uninstall -> delete. ``keep_types`` limits the
+        deactivation to projections whose type left the manifest.
+        """
+        prefix = f"{pack.name}-"
+        suffix = "-agent"
+        records = self.db.scalars(
+            select(Agent).where(Agent.slug.like(f"{prefix}%{suffix}"))
+        ).all()
+        for record in records:
+            agent_type = record.slug[len(prefix):-len(suffix)]
+            if keep_types is not None and agent_type in keep_types:
+                continue
+            if delete:
+                self.db.delete(record)
+            else:
+                record.is_active = False
+                record.status = AgentStatus.disabled
 
     def disable(self, name: str) -> Pack:
         pack = self.get(name)
         self._guard(pack, "disable")
         pack.is_active = False
         pack.state = PackState.disabled
+        # Registry projection follows the lifecycle: disabled pack -> its
+        # agents disappear from routing/UI until re-enabled.
+        self._deactivate_pack_agents(pack)
         self.db.commit()
         self.db.refresh(pack)
         return pack
@@ -351,6 +389,8 @@ class PackService:
     def uninstall(self, name: str) -> None:
         pack = self.get(name)
         self._guard(pack, "uninstall")
+        # Registry projection is removed with the pack.
+        self._deactivate_pack_agents(pack, delete=True)
         self.db.delete(pack)
         self.db.commit()
 

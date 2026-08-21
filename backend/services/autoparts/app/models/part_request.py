@@ -4,6 +4,7 @@ import uuid
 from typing import Any
 
 from sqlalchemy import JSON, Enum, ForeignKey, Integer, String
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -34,6 +35,19 @@ class PartRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     source_message_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("conversation_messages.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+
+    # Sprint 5.8.3 Pack Context Contract: provenance references to the
+    # core-owned conversation/message/customer. Plain UUIDs, no FK — the
+    # pack stores references, never copies of core entities.
+    core_conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), index=True, nullable=True
+    )
+    core_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), index=True, nullable=True
+    )
+    core_customer_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), index=True, nullable=True
     )
 
     intent: Mapped[str] = mapped_column(String(40), nullable=False, default="part_search")

@@ -182,6 +182,13 @@ class AgentContext:
     """Everything an agent may touch during ``execute``.
 
     Facades are injected by the pack runtime; agents never construct them.
+
+    Sprint 5.8.3 Pack Context Contract: core stays the source of truth for
+    company/user/customer/conversation/message and ships exactly the context
+    a run needs at remote dispatch. Agents read ``ctx.tenant / ctx.customer /
+    ctx.conversation / ctx.message / ctx.history`` and never query another
+    service's storage; the pack stores only its own domain data plus
+    ``core_*`` references.
     """
 
     objective: str
@@ -192,6 +199,16 @@ class AgentContext:
     agent_id: Any = None
     company_id: Any = None
     task_id: Any = None
+
+    # Dispatch identity (idempotency): stable per task, unique per attempt.
+    dispatch_id: str | None = None
+
+    # Pack Context Contract payloads (plain dicts, core-owned truth).
+    tenant: dict[str, Any] = field(default_factory=dict)       # {"company_id"}
+    customer: dict[str, Any] = field(default_factory=dict)     # {"id", "name", ...}
+    conversation: dict[str, Any] = field(default_factory=dict) # {"id", "channel"}
+    message: dict[str, Any] = field(default_factory=dict)      # {"id", "text"}
+    history: list[Any] = field(default_factory=list)           # [{sender, text}, ...]
 
     # Capabilities — pack-provided facades.
     memory: MemoryFacade | None = None

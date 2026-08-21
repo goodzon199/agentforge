@@ -59,6 +59,11 @@ class AgentExecuteRequest(BaseModel):
     input_data: dict[str, Any] = {}
     task_id: str | None = None
     company_id: str | None = None
+    # Sprint 5.8.3 Pack Context Contract: core-owned run context shipped with
+    # the dispatch (tenant/actor/conversation/message/history). The pack
+    # never reads core storage; ``message.id`` keys idempotency.
+    dispatch_id: str | None = None
+    context: dict[str, Any] = {}
 
 
 def _get_or_404(db: Session, model, entity_id: str):
@@ -105,6 +110,8 @@ def agent_execute(payload: AgentExecuteRequest, db: Session = Depends(get_db)) -
         input_data=payload.input_data or {},
         task_id=payload.task_id,
         company_id=payload.company_id,
+        dispatch_id=payload.dispatch_id,
+        context=payload.context or {},
     )
     output = run_agent(agent, ctx)
     return {

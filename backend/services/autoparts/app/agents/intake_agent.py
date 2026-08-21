@@ -109,6 +109,24 @@ class IntakeAgent(BaseAgent):
                 routing_decision={"needs_agent": None, "reason": "db_missing", "engine": "intake"},
             )
 
+        message_data = ctx.message or {}
+        if message_data.get("id") and message_data.get("text"):
+            # Pack Context Contract (sprint 5.8.3): core shipped the message
+            # with the dispatch — no SELECT Conversation in the pack DB.
+            text = str(message_data.get("text") or "")
+            result = self._parse(text, conversation=None, ctx=ctx)
+            service = IntakeService(ctx.db)
+            outcome = service.process_dispatch(ctx, result, agent_id=ctx.agent_id)
+            ctx.db.commit()
+            ctx.memory.remember(
+                f"Сообщение: {text[:80]} -> intent={result.intent}, "
+                f"action={outcome.action}, ready={outcome.ready_for_search}",
+                kind="intake",
+            )
+            return self._output(outcome, result)
+
+        # Legacy direct-dispatch path (workflow runs, manual tasks): local
+        # conversation/message ids arrive in input_data.
         input_data = ctx.input_data or {}
         conversation_id = input_data.get("conversation_id")
         message_id = input_data.get("message_id")
@@ -141,6 +159,10 @@ class IntakeAgent(BaseAgent):
             kind="intake",
         )
 
+        return self._output(outcome, result)
+
+    @staticmethod
+    def _output(outcome, result) -> AgentOutput:
         data: dict[str, Any] = {
             "action": outcome.action,
             "intent": result.intent,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from datetime import UTC
 from typing import Any
 
@@ -15,7 +16,7 @@ from app.core.redis import redis_client
 from app.llm.client import LLMClient, TaskLLMProxy, llm_client
 from app.memory.service import MemoryService
 from app.models import Agent as AgentRecord
-from app.models import Task, TaskEvent, Trace
+from app.models import Conversation, ConversationMessage, Task, TaskEvent, Trace
 from app.models.enums import TaskStatus
 from app.orchestrator.messages import TaskMessage
 from app.reliability.errors import TRANSIENT, FailureKind, classify_exception
@@ -262,6 +263,11 @@ class Orchestrator:
             # Attribute the task to the agent that actually executed it.
             task.agent_id = final_agent.id
 
+            # Chat pipeline tail (sprint 5.8.3): the pack replied over the
+            # contract; core owns conversations, so the reply is persisted
+            # here — the pack never writes into core storage.
+            self._persist_agent_reply(db, task, output, final_agent)
+
             self._add_event(
                 db,
                 task,
@@ -423,12 +429,16 @@ class Orchestrator:
         agent_type: str,
         agent_record: AgentRecord,
     ):
-        """Dispatch a domain task to the autoparts service (sprint 5.0).
+        """Dispatch a domain task to the owning pack (sprint 5.0).
 
         POST /internal/agents/execute with the task objective/input_data; the
         domain service runs its own agent implementation and returns the
         output. The internal client raises on transport/HTTP errors, which the
         task pipeline classifies (transient retry or dead-letter).
+
+        Sprint 5.8.3 Pack Context Contract: core ships the conversation
+        context with the dispatch so the pack never reads core-owned storage.
+        ``message_id`` travels in the payload — the pack deduplicates on it.
         """
         from shared.internal import internal_post
 
@@ -443,6 +453,10 @@ class Orchestrator:
                     "agent_type": agent_type,
                     "objective": task.objective,
                     "input_data": task.input_data or {},
+                    "task_id": str(task.id),
+                    "company_id": str(task.company_id) if task.company_id else None,
+                    "dispatch_id": str(uuid.uuid4()),
+                    "context": self._build_pack_context(db, task),
                 },
                 timeout=settings.llm_read_timeout + 10.0,
             )
@@ -471,6 +485,136 @@ class Orchestrator:
         ):
             pass
         return _RemoteOutput(result)
+
+    def _persist_agent_reply(
+        self, db: Session, task: Task, output: Any, agent_record: AgentRecord
+    ) -> None:
+        """Persist the agent's reply into the core-owned conversation.
+
+        Idempotent per task (replays must not double-post): a reply is
+        skipped when an agent message tagged with this task id already
+        exists. Human takeover between dispatch and completion suppresses
+        the reply entirely.
+        """
+        conversation_id = (task.input_data or {}).get("conversation_id")
+        response = getattr(output, "response", "") or ""
+        if not conversation_id or not response.strip():
+            return
+        try:
+            cid = uuid.UUID(str(conversation_id))
+        except (ValueError, TypeError):
+            return
+        conversation = db.get(Conversation, cid)
+        if conversation is None:
+            return
+
+        task_key = str(task.id)
+        recent = db.scalars(
+            select(ConversationMessage)
+            .where(ConversationMessage.conversation_id == cid)
+            .where(ConversationMessage.sender_type == "agent")
+            .order_by(ConversationMessage.created_at.desc())
+            .limit(50)
+        ).all()
+        for message in recent:
+            if (message.structured_data or {}).get("task_id") == task_key:
+                return
+
+        from app.services.conversation_service import ConversationService
+
+        if not ConversationService(db).can_agent_act(conversation):
+            return
+
+        ConversationService(db).add_message(
+            conversation,
+            content=response,
+            sender_type="agent",
+            sender_id=None,
+            structured_data={
+                "kind": "intake",
+                "agent_id": str(agent_record.id) if agent_record else None,
+                "task_id": task_key,
+            },
+        )
+        db.flush()
+
+    def _build_pack_context(self, db: Session, task: Task) -> dict[str, Any]:
+        """Pack Context Contract (sprint 5.8.3): ship the run's context.
+
+        Core is the source of truth for company/customer/conversation/message;
+        the payload carries exactly what a conversation-driven agent needs.
+        A task without conversation linkage (workflow runs, manual tasks)
+        dispatches with an empty context. Failures here must never break the
+        dispatch — the pack falls back to its legacy input_data path.
+        """
+        import uuid as uuid_mod
+
+        from app.models import Conversation, ConversationMessage, Customer
+
+        input_data = task.input_data or {}
+        conv_id = input_data.get("conversation_id")
+        msg_id = input_data.get("message_id")
+        if not conv_id or not msg_id:
+            return {}
+        try:
+            conversation = db.get(
+                Conversation, uuid_mod.UUID(str(conv_id))
+            )
+            message = db.get(ConversationMessage, uuid_mod.UUID(str(msg_id)))
+            if conversation is None or message is None:
+                return {}
+            customer = (
+                db.get(Customer, conversation.customer_id)
+                if conversation.customer_id
+                else None
+            )
+            recent = db.scalars(
+                select(ConversationMessage)
+                .where(ConversationMessage.conversation_id == conversation.id)
+                .order_by(ConversationMessage.created_at.desc())
+                .limit(11)
+            ).all()
+            history = [
+                {
+                    "sender": m.sender_type or "customer",
+                    "text": m.content,
+                }
+                for m in reversed(recent)
+                if str(m.id) != str(message.id)
+            ][-10:]
+            profile: dict[str, Any] = {}
+            if customer is not None:
+                profile = {
+                    "id": str(customer.id),
+                    "name": customer.name,
+                    "email": customer.email or "",
+                    "phone": customer.phone or "",
+                }
+            return {
+                "tenant": {"company_id": str(conversation.company_id)},
+                "actor": {
+                    "customer_id": (
+                        str(conversation.customer_id)
+                        if conversation.customer_id
+                        else None
+                    )
+                },
+                "conversation": {
+                    "id": str(conversation.id),
+                    "channel": conversation.channel or "webchat",
+                },
+                "message": {"id": str(message.id), "text": message.content},
+                "context": {
+                    "recent_messages": history,
+                    "customer_profile": profile,
+                    "metadata": {},
+                },
+            }
+        except Exception as exc:
+            logger.warning(
+                "pack context build failed for task %s: %s", task.id, exc
+            )
+            return {}
 
     def _add_event(
         self,

@@ -10,6 +10,7 @@ from app.models.conversation import Conversation
 from app.models.conversation_message import ConversationMessage
 from app.models.customer import Customer
 from app.models.dead_task import DeadTask
+from app.models.domain_thread_link import DomainThreadLink
 from app.models.fitment import (
     CatalogFitment,
     CrossReference,
@@ -48,6 +49,7 @@ __all__ = [
     "CrossReference",
     "Customer",
     "DeadTask",
+    "DomainThreadLink",
     "KnowledgeEntry",
     "LLMUsage",
     "LongMemory",

@@ -57,9 +57,27 @@ class BaseAgent(SDKAgent):
         *,
         task_id: Any = None,
         company_id: Any = None,
+        dispatch_id: str | None = None,
+        context: dict[str, Any] | None = None,
     ) -> AgentContext:
-        """Wire the SDK facades over the pack services for one run."""
+        """Wire the SDK facades over the pack services for one run.
+
+        ``context`` is the Pack Context Contract payload shipped by core
+        (sprint 5.8.3): tenant/actor/conversation/message + recent history.
+        It is mapped onto the SDK's ``ctx.tenant / ctx.customer /
+        ctx.conversation / ctx.message / ctx.history`` so agents stay
+        storage-agnostic.
+        """
         company_id = company_id or self.record.company_id
+        pack_ctx = context or {}
+        actor = dict(pack_ctx.get("actor") or {})
+        profile = dict((pack_ctx.get("context") or {}).get("customer_profile") or {})
+        customer_ref: dict[str, Any] = {}
+        if actor.get("customer_id"):
+            customer_ref["id"] = actor["customer_id"]
+        for key in ("name", "email", "phone"):
+            if profile.get(key):
+                customer_ref[key] = profile[key]
         ctx = AgentContext(
             objective=objective,
             input_data=input_data or {},
@@ -67,6 +85,12 @@ class BaseAgent(SDKAgent):
             agent_id=self.record.id,
             company_id=company_id,
             task_id=task_id,
+            dispatch_id=dispatch_id,
+            tenant=dict(pack_ctx.get("tenant") or {}),
+            customer=customer_ref,
+            conversation=dict(pack_ctx.get("conversation") or {}),
+            message=dict(pack_ctx.get("message") or {}),
+            history=list((pack_ctx.get("context") or {}).get("recent_messages") or []),
             memory=AgentMemory(self._memory_service, self.record),
             tools=AgentTools(self._tools),
             actions=AgentActions(self._db, self.record, task_id),

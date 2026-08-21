@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -54,6 +55,12 @@ class IntakeService:
     Source of truth lives in Conversation / ConversationMessage / PartRequest /
     Vehicle — never only in agent memory. Reprocessing the same message is
     idempotent (tracked in ``structured_data.processed_message_ids``).
+
+    Sprint 5.8.3 Pack Context Contract: ``process_dispatch`` serves remote
+    dispatches from core. Core owns conversations/messages; the pack keeps
+    only its domain aggregates plus ``core_*`` references (DomainThreadLink
+    maps a core conversation to the local thread anchor). The agent never
+    SELECTs a core-owned row.
     """
 
     def __init__(self, db: Session) -> None:
@@ -69,6 +76,135 @@ class IntakeService:
         *,
         agent_id: uuid.UUID,
     ) -> IntakeOutcome:
+        """Legacy path: the dispatch carried local conversation/message ids."""
+        return self._run_intake(
+            conversation=conversation,
+            result=result,
+            agent_id=agent_id,
+            message_key=str(message.id),
+            local_message=message,
+        )
+
+    def process_dispatch(
+        self,
+        ctx: Any,
+        result: IntakeResult,
+        *,
+        agent_id: uuid.UUID | None,
+    ) -> IntakeOutcome:
+        """Pack Context Contract path (sprint 5.8.3).
+
+        ``ctx.message`` carries the core message (id + text); the pack
+        anchors the core conversation to its own domain thread once, then
+        runs the regular intake. Idempotent per core message id.
+        """
+        conversation = self._ensure_thread_anchors(ctx)
+        core_refs: dict[str, Any] = {}
+        try:
+            core_refs["core_conversation_id"] = uuid.UUID(
+                str((ctx.conversation or {}).get("id"))
+            )
+            core_refs["core_message_id"] = uuid.UUID(
+                str((ctx.message or {}).get("id"))
+            )
+            core_customer = (ctx.customer or {}).get("id")
+            if core_customer:
+                core_refs["core_customer_id"] = uuid.UUID(str(core_customer))
+        except (ValueError, TypeError):
+            core_refs = {}
+        return self._run_intake(
+            conversation=conversation,
+            result=result,
+            agent_id=agent_id,
+            message_key=str((ctx.message or {}).get("id")),
+            local_message=None,
+            core_refs=core_refs,
+        )
+
+    def _ensure_thread_anchors(self, ctx: Any) -> Conversation:
+        """Map the core conversation onto pack-domain aggregates.
+
+        Creates (once per core conversation) the local Customer/Conversation
+        rows the pack schema needs as FK anchors, linked through
+        DomainThreadLink. This is an anchor, not a replica: messages and
+        history stay in core.
+        """
+        from sqlalchemy import select
+
+        from app.models import Company, DomainThreadLink
+
+        core_conversation_id = uuid.UUID(str((ctx.conversation or {}).get("id")))
+        link = self.db.scalars(
+            select(DomainThreadLink).where(
+                DomainThreadLink.core_conversation_id == core_conversation_id
+            )
+        ).first()
+        if link is not None:
+            conversation = self.db.get(Conversation, link.conversation_id)
+            if conversation is not None:
+                return conversation
+
+        company = self.db.scalars(select(Company).where(Company.is_active.is_(True))).first()
+        if company is None:
+            company = self.db.scalars(select(Company)).first()
+        if company is None:
+            raise ValueError("В БД пака нет компании для привязки треда.")
+
+        core_customer_raw = (ctx.customer or {}).get("id")
+        customer = None
+        if core_customer_raw:
+            customer = self.db.scalars(
+                select(Customer).where(Customer.external_id == str(core_customer_raw))
+            ).first()
+        if customer is None:
+            profile_name = ((ctx.customer or {}).get("name") or "").strip()
+            customer = Customer(
+                company_id=company.id,
+                name=profile_name or f"Клиент {str(core_customer_raw)[:8] if core_customer_raw else 'webchat'}",
+                external_id=str(core_customer_raw) if core_customer_raw else "",
+                source="webchat",
+            )
+            self.db.add(customer)
+            self.db.flush()
+
+        channel = str((ctx.conversation or {}).get("channel") or "webchat")
+        conversation = Conversation(
+            company_id=company.id,
+            customer_id=customer.id,
+            channel=channel,
+        )
+        self.db.add(conversation)
+        self.db.flush()
+        self.db.add(
+            DomainThreadLink(
+                core_conversation_id=core_conversation_id,
+                conversation_id=conversation.id,
+                customer_id=customer.id,
+                core_customer_id=(
+                    uuid.UUID(str(core_customer_raw)) if core_customer_raw else None
+                ),
+                core_company_id=(
+                    uuid.UUID(str((ctx.tenant or {}).get("company_id")))
+                    if (ctx.tenant or {}).get("company_id")
+                    else None
+                ),
+                channel=channel,
+            )
+        )
+        self.db.flush()
+        return conversation
+
+    def _run_intake(
+        self,
+        *,
+        conversation: Conversation,
+        result: IntakeResult,
+        agent_id: uuid.UUID | None,
+        message_key: str,
+        local_message: ConversationMessage | None,
+        core_refs: dict[str, Any] | None = None,
+    ) -> IntakeOutcome:
+        core_refs = core_refs or {}
         # Human takeover gate: if a manager is driving (or the conversation is
         # paused/closed), the AI must not process or reply. The message itself
         # is already stored — the manager sees it and answers.
@@ -81,17 +217,18 @@ class IntakeService:
             )
 
         if result.intent != "part_search":
-            return self._handle_other_intent(conversation, message, result, agent_id)
+            return self._handle_other_intent(conversation, result, agent_id)
 
         pr_service = PartRequestService(self.db)
         conv_service = ConversationService(self.db)
 
         # Idempotency: a message already absorbed into a request must not
-        # create duplicates when processed again.
+        # create duplicates when processed again (key = core message id on
+        # the contract path, local message id on the legacy path).
         active = pr_service.get_active_for_conversation(conversation.id)
         if active is not None:
             processed = active.structured_data.get(_SOURCE_OF_TRUTH_KEY, [])
-            if str(message.id) in processed:
+            if message_key in processed:
                 return IntakeOutcome(
                     action="already_processed",
                     reply="",
@@ -104,7 +241,12 @@ class IntakeService:
         vehicle = self._upsert_vehicle(conversation, result, active)
         self.db.flush()  # новому Vehicle присваивается id до использования
         part_request, created = self._upsert_part_request(
-            conversation, message, result, vehicle, active
+            conversation,
+            result,
+            vehicle,
+            active,
+            source_message_id=local_message.id if local_message is not None else None,
+            core_refs=core_refs,
         )
         self.db.flush()
 
@@ -112,10 +254,11 @@ class IntakeService:
         # customer_message_received -> part_request_created/updated.
         self._record_audit(
             conversation=conversation,
-            message=message,
+            message_key=message_key,
             part_request=part_request,
             created=created,
             intent="part_search",
+            core_refs=core_refs,
         )
 
         # Shadow Mode (sprint 3.8.1): open a comparison for the new request so
@@ -139,13 +282,16 @@ class IntakeService:
         # the manager dashboard read one source of truth, not a proxy.
         from app.services.fitment_service import FitmentService
 
-        part_request.structured_data["fitment"] = FitmentService(self.db).snapshot(part_request)
-        self.db.flush()
+        # structured_data is a plain JSON column: rebind instead of mutating
+        # in place, or SQLAlchemy won't see the change after the INSERT.
+        structured = dict(part_request.structured_data or {})
+        structured["fitment"] = FitmentService(self.db).snapshot(part_request)
 
-        processed = part_request.structured_data.get(_SOURCE_OF_TRUTH_KEY, [])
-        if str(message.id) not in processed:
-            processed.append(str(message.id))
-        part_request.structured_data[_SOURCE_OF_TRUTH_KEY] = processed
+        processed = list(structured.get(_SOURCE_OF_TRUTH_KEY, []))
+        if message_key not in processed:
+            processed.append(message_key)
+        structured[_SOURCE_OF_TRUTH_KEY] = processed
+        part_request.structured_data = structured
         self.db.flush()
 
         if ready:
@@ -155,7 +301,11 @@ class IntakeService:
             reply = self._safe_clarification(result, missing)
             search_task_id = None
 
-        self._agent_reply(conv_service, conversation, reply, agent_id)
+        if local_message is not None:
+            # Legacy path: the pack owns this conversation and replies here.
+            # Contract path (sprint 5.8.3): core persists AgentOutput.response
+            # into the core-owned conversation; the anchor stays read-only.
+            self._agent_reply(conv_service, conversation, reply, agent_id)
 
         return IntakeOutcome(
             action="part_request_created" if created else "part_request_updated",
@@ -173,20 +323,27 @@ class IntakeService:
         self,
         *,
         conversation: Conversation,
-        message: ConversationMessage,
+        message_key: str,
         part_request: PartRequest,
         created: bool,
         intent: str,
+        core_refs: dict[str, Any] | None = None,
     ) -> None:
         """Append pilot-funnel milestones to the audit journal."""
+        core_refs = core_refs or {}
         audit = AuditService(self.db)
         audit.record(
             action="customer_message_received",
             entity_type="conversation_message",
-            entity_id=str(message.id),
+            entity_id=message_key,
             company_id=conversation.company_id,
             detail={
                 "conversation_id": str(conversation.id),
+                "core_conversation_id": (
+                    str(core_refs["core_conversation_id"])
+                    if core_refs.get("core_conversation_id")
+                    else None
+                ),
                 "intent": intent,
             },
         )
@@ -197,7 +354,7 @@ class IntakeService:
             company_id=conversation.company_id,
             detail={
                 "conversation_id": str(conversation.id),
-                "source_message_id": str(message.id),
+                "source_message_id": message_key,
                 "ready_for_search": part_request.status
                 == PartRequestStatus.ready_for_search,
             },
@@ -299,11 +456,14 @@ class IntakeService:
     def _upsert_part_request(
         self,
         conversation: Conversation,
-        message: ConversationMessage,
         result: IntakeResult,
         vehicle: Vehicle | None,
         active: PartRequest | None,
+        *,
+        source_message_id: uuid.UUID | None = None,
+        core_refs: dict[str, Any] | None = None,
     ) -> tuple[PartRequest, bool]:
+        core_refs = core_refs or {}
         pr_service = PartRequestService(self.db)
         part = result.part
         part_name = (part.name if part and part.name else "").strip()
@@ -314,11 +474,14 @@ class IntakeService:
             active.part_name = part_name or active.part_name
             active.article = article or active.article
             active.quantity = quantity or active.quantity
-            active.source_message_id = message.id
+            if source_message_id is not None:
+                active.source_message_id = source_message_id
             active.intent = "part_search"
-            active.structured_data["intent_confidence"] = getattr(
-                result, "confidence", None
-            )
+            structured = dict(active.structured_data or {})
+            structured["intent_confidence"] = getattr(result, "confidence", None)
+            active.structured_data = structured
+            for key, value in core_refs.items():
+                setattr(active, key, value)
             if vehicle is not None:
                 active.vehicle_id = vehicle.id
             return active, False
@@ -327,7 +490,7 @@ class IntakeService:
             company_id=conversation.company_id,
             conversation_id=conversation.id,
             customer_id=conversation.customer_id,
-            source_message_id=message.id,
+            source_message_id=source_message_id,
             part_name=part_name,
             article=article,
             quantity=quantity,
@@ -336,6 +499,8 @@ class IntakeService:
             status=PartRequestStatus.collecting_data,
             structured_data={"intent_confidence": getattr(result, "confidence", None)},
         )
+        for key, value in core_refs.items():
+            setattr(part_request, key, value)
         return part_request, True
 
     def _missing_fields(
@@ -377,7 +542,7 @@ class IntakeService:
         conv_service: ConversationService,
         conversation: Conversation,
         reply: str,
-        agent_id: uuid.UUID,
+        agent_id: uuid.UUID | None,
     ) -> None:
         if not reply:
             return
@@ -390,16 +555,18 @@ class IntakeService:
             content=reply,
             sender_type="agent",
             sender_id=None,
-            structured_data={"kind": "intake", "agent_id": str(agent_id)},
+            structured_data={
+                "kind": "intake",
+                "agent_id": str(agent_id) if agent_id else None,
+            },
         )
         self.db.flush()
 
     def _handle_other_intent(
         self,
         conversation: Conversation,
-        message: ConversationMessage,
         result: IntakeResult,
-        agent_id: uuid.UUID,
+        agent_id: uuid.UUID | None,
     ) -> IntakeOutcome:
         reply = self._reply_for_intent(result)
         self._agent_reply(ConversationService(self.db), conversation, reply, agent_id)
