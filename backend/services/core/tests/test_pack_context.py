@@ -178,6 +178,32 @@ def test_context_api_customer_profile_gate(db_session, client):
     assert denied.status_code == 403
 
 
+def test_context_api_customer_forbidden_without_customer_read(db_session, client):
+    """A pack with other permissions but no ``customer.read`` gets 403."""
+    _, customer, _, _ = _make_conversation(db_session)
+    db_session.add(
+        Pack(
+            name="noreadpack",
+            version="1.0.0",
+            base_url="http://localhost:9",
+            permissions=["conversation.read", "supplier.search"],
+            state="active",
+            is_active=True,
+        )
+    )
+    db_session.flush()
+    headers = {
+        "X-Internal-Token": settings.internal_api_token,
+        "X-Pack-Name": "noreadpack",
+    }
+
+    response = client.get(
+        f"/internal/context/customers/{customer.id}", headers=headers
+    )
+
+    assert response.status_code == 403
+
+
 @pytest.fixture
 def pack_service(db_session, monkeypatch):
     from app.services.pack_service import PackService

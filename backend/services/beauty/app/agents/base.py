@@ -27,6 +27,8 @@ class BeautyAgent(SDKAgent):
         *,
         task_id: Any = None,
         company_id: Any = None,
+        dispatch_id: Any = None,
+        context: dict[str, Any] | None = None,
     ) -> AgentContext:
         """Wire the pure-SDK facades for one run."""
         from shared.tools import ToolRegistry
@@ -40,12 +42,19 @@ class BeautyAgent(SDKAgent):
                 tools.register(tool)
         memory = RunMemory()
         audit = RunAudit()
+        payload = context or {}
         ctx = AgentContext(
             objective=objective,
             input_data=input_data or {},
             agent_id=self.kind,
             company_id=company_id,
             task_id=task_id,
+            dispatch_id=dispatch_id,
+            tenant=payload.get("tenant") or {},
+            customer=payload.get("actor") or payload.get("customer") or {},
+            conversation=payload.get("conversation") or {},
+            message=payload.get("message") or {},
+            history=payload.get("history") or [],
             memory=memory,
             tools=tools,
             actions=audit,

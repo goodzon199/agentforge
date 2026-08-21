@@ -32,6 +32,63 @@ def _run(kind: str, objective: str, input_data: dict | None = None):
     return run_agent(agent, ctx)
 
 
+def test_build_context_maps_pack_context_contract():
+    """Sprint 5.8.3: beauty receives the same dispatch context as autoparts."""
+    from fastapi.testclient import TestClient
+
+    from shared.internal import internal_token
+
+    from app.api.internal import AgentExecuteRequest
+    from app.main import app
+
+    payload = AgentExecuteRequest(
+        agent_type="reception",
+        objective="process_customer_message",
+        dispatch_id="d" * 8,
+        context={
+            "tenant": {"company_id": "c1"},
+            "actor": {"customer_id": "u1"},
+            "conversation": {"id": "conv1", "channel": "webchat"},
+            "message": {"id": "m1", "text": "Запишите меня на стрижку 2026-08-25"},
+            "history": [],
+        },
+    )
+    assert payload.dispatch_id == "d" * 8 and payload.context["message"]["id"] == "m1"
+
+    agent = get_class("reception")()
+    ctx = agent.build_context(
+        objective=payload.objective,
+        input_data={},
+        task_id=None,
+        company_id=None,
+        dispatch_id=payload.dispatch_id,
+        context=payload.context,
+    )
+    assert ctx.dispatch_id == "d" * 8
+    assert ctx.tenant == {"company_id": "c1"}
+    assert ctx.customer == {"customer_id": "u1"}
+    assert ctx.conversation == {"id": "conv1", "channel": "webchat"}
+    assert ctx.message == {"id": "m1", "text": "Запишите меня на стрижку 2026-08-25"}
+
+    out = run_agent(agent, ctx)
+    assert out.data["has_service"] is True
+
+    # The HTTP contract accepts the same shape end-to-end.
+    client = TestClient(app)
+    response = client.post(
+        "/internal/agents/execute",
+        headers={"X-Internal-Token": internal_token()},
+        json={
+            "agent_type": "reception",
+            "objective": "process_customer_message",
+            "dispatch_id": "d" * 8,
+            "context": payload.context,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["has_service"] is True
+
+
 def test_registry_describes_all_beauty_agents():
     kinds = agent_registry.kinds()
     assert set(kinds) == {"reception", "calendar", "booking", "sales", "reminder"}

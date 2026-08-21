@@ -36,6 +36,9 @@ class AgentExecuteRequest(BaseModel):
     input_data: dict[str, Any] = {}
     task_id: str | None = None
     company_id: str | None = None
+    # Sprint 5.8.3 Pack Context Contract: same dispatch shape as autoparts.
+    dispatch_id: str | None = None
+    context: dict[str, Any] = {}
 
 
 @router.get("/health")
@@ -129,6 +132,8 @@ def agent_execute(payload: AgentExecuteRequest) -> dict[str, Any]:
             input_data=payload.input_data or {},
             task_id=payload.task_id,
             company_id=payload.company_id,
+            dispatch_id=payload.dispatch_id,
+            context=payload.context or {},
         )
         try:
             output = run_agent(agent, ctx)

@@ -758,12 +758,31 @@ token аутентифицирует вызов; per-pack credentials — 5.9.
 
 ### Проверка
 
-Тесты: core `tests/test_pack_context.py` (9: контракт пейлоада, гейты 403/200
+Тесты: core `tests/test_pack_context.py` (10: контракт пейлоада, гейты 403/200
 Context API, lifecycle проекций), autoparts
 `tests/test_intake_context_contract.py` (3: якоря+заявка, идемпотентность,
-legacy fallback). E2E на живом стеке: сообщение клиента → задача completed
-(routing engine=intake), `part_request_created`, ответ агента в core-диалоге,
-в БД пака заполнены `core_*` и `domain_thread_links`.
+legacy fallback), beauty `tests/test_beauty.py::test_build_context_maps_pack_context_contract`
+(тот же AgentContext + HTTP-контракт).
+
+### DoD 5.8.3 (проверено на живом стеке)
+
+Полный пользовательский путь: клиент → `POST /api/v1/public/chat/messages`
+→ Core Conversation/Message → Task → autoparts IntakeAgent (internal
+contract) → PartRequest → clarification → ответ через Core
+(`_persist_agent_reply`) → ConversationMessage → публичный листинг сообщений.
+
+- ✓ пак на контрактном пути не читает Conversation/Customer из своей БД:
+  текст берётся из `ctx.message`, якоря создаются upsert'ом on demand;
+- ✓ restart не ломает flow: force-recreate всех контейнеров → повторный
+  webchat проходит до ответа агента;
+- ✓ duplicate dispatch без дубля заявки: повторная доставка того же
+  message.id → `already_processed`, ровно одна PartRequest (тест + live);
+- ✓ Beauty получает тот же AgentContext (`dispatch_id/context` в
+  `/internal/agents/execute`, reception читает `ctx.message.text`; live 200);
+- ✓ HelloPack работает через тот же контракт идентичности: core-JWT через
+  gateway `/api/v1/autoparts/hellopack/hello` → теневой пользователь → 200;
+- ✓ пак без `customer.read` получает 403 на `/internal/context/customers/{id}`
+  (тест `test_context_api_customer_forbidden_without_customer_read`).
 
 ### Итог
 

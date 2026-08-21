@@ -33,7 +33,14 @@ class ReceptionAgent(BeautyAgent):
     permissions: ClassVar[list[str]] = ["customer.read"]
 
     def execute(self, ctx: AgentContext) -> AgentOutput:
-        objective = ctx.objective or ""
+        # Pack Context Contract (sprint 5.8.3): on chat dispatch the customer
+        # text arrives in ctx.message.text; objective stays a task label.
+        message_data = ctx.message or {}
+        objective = (
+            str(message_data.get("text") or "")
+            or ctx.objective
+            or ""
+        )
         input_data = ctx.input_data or {}
 
         service_key = self._service(objective)
