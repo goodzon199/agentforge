@@ -108,8 +108,13 @@ def verify_password(password: str, hashed: str) -> bool:
         return False
 
 
-def create_access_token(subject: str) -> str:
-    """Issue a signed JWT for a user id."""
+def create_access_token(subject: str, email: str | None = None) -> str:
+    """Issue a signed JWT for a user id.
+
+    ``email`` travels as a claim so packs behind the platform gateway can
+    resolve their local shadow account: user UUIDs are per-database and do
+    not match across services.
+    """
     now = datetime.now(UTC)
     payload = {
         "sub": subject,
@@ -118,6 +123,8 @@ def create_access_token(subject: str) -> str:
         "iat": now,
         "exp": now + timedelta(minutes=settings.jwt_expire_minutes),
     }
+    if email:
+        payload["email"] = email
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 

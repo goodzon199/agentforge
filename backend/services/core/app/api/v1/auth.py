@@ -65,7 +65,7 @@ def login(
             detail="Неверный e-mail или пароль.",
         )
     _throttle.record_success(payload.email)
-    token = create_access_token(str(user.id))
+    token = create_access_token(str(user.id), email=user.email)
     return LoginResponse(
         access_token=token,
         user=_to_read(user),

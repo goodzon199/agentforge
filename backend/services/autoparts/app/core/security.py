@@ -108,7 +108,7 @@ def verify_password(password: str, hashed: str) -> bool:
         return False
 
 
-def create_access_token(subject: str) -> str:
+def create_access_token(subject: str, email: str | None = None) -> str:
     """Issue a signed JWT for a user id."""
     now = datetime.now(UTC)
     payload = {
@@ -118,11 +118,18 @@ def create_access_token(subject: str) -> str:
         "iat": now,
         "exp": now + timedelta(minutes=settings.jwt_expire_minutes),
     }
+    if email:
+        payload["email"] = email
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
-def decode_access_token(token: str) -> uuid.UUID | None:
-    """Validate a JWT and return the user id. None on any failure."""
+def decode_access_token_claims(token: str) -> tuple[uuid.UUID, str | None] | None:
+    """Validate a JWT and return (user_id, email claim).
+
+    The email claim lets the pack resolve its local shadow account when the
+    request arrives through the platform gateway: user UUIDs are per-database
+    and do not match across services. None on any failure.
+    """
     try:
         payload = jwt.decode(
             token,
@@ -132,6 +139,12 @@ def decode_access_token(token: str) -> uuid.UUID | None:
         )
         if payload.get("type") != "access":
             return None
-        return uuid.UUID(payload["sub"])
+        return uuid.UUID(payload["sub"]), payload.get("email")
     except (jwt.PyJWTError, KeyError, ValueError):
         return None
+
+
+def decode_access_token(token: str) -> uuid.UUID | None:
+    """Validate a JWT and return the user id. None on any failure."""
+    claims = decode_access_token_claims(token)
+    return claims[0] if claims else None

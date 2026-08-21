@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.business_rate_limit import BusinessRateLimiter, get_business_rate_limiter
 from app.core.database import get_db
-from app.core.security import decode_access_token
+from app.core.security import decode_access_token_claims
 from app.models import User
 from app.services.conversation_service import ConversationService
 from app.services.order_service import OrderService
@@ -91,14 +91,21 @@ def get_current_user(
             detail="Требуется авторизация.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    user_id = decode_access_token(credentials.credentials)
-    if user_id is None:
+    claims = decode_access_token_claims(credentials.credentials)
+    if claims is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Токен недействителен или истёк.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    user_id, token_email = claims
     user = UserService(db).get(user_id)
+    # Gateway identity: the JWT was issued by core, whose user UUIDs live in
+    # the core database. Fall back to the local shadow account by email.
+    shadow_identity = False
+    if user is None and token_email:
+        user = UserService(db).get_by_email(token_email)
+        shadow_identity = user is not None
     if user is None or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -110,8 +117,12 @@ def get_current_user(
     from app.services.audit_context import enrich_audit_user
 
     enrich_audit_user(user.id, user.company_id)
+    # The first-login password gate is enforced by core at login; a shadow
+    # identity resolved through the gateway must not re-check core-owned
+    # state that this database cannot know about.
     if (
         user.must_change_password
+        and not shadow_identity
         and request is not None
         and request.url.path not in _PASSWORD_CHANGE_ALLOWED_PATHS
     ):
