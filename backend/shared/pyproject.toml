@@ -1,0 +1,13 @@
+[project]
+name = "agentos-shared"
+version = "0.1.0"
+description = "AgentOS platform extraction: shared contract package (no SQLAlchemy, no services)"
+requires-python = ">=3.12"
+dependencies = ["fastapi>=0.115", "PyYAML>=6.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["shared"]

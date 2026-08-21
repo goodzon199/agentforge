@@ -1,4 +1,36 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8011/api/v1";
+
+// Sprint 5.8.1 Platform Gateway: the frontend knows a single core address.
+// Pack namespaces are exposed by core as /api/v1{pack_route}/... and proxied
+// to the owning pack from the registry. Domain paths below are rewritten to
+// the autoparts namespace; core routes them to the pack automatically.
+const PACK_PREFIX = "/autoparts";
+
+// Sprint 5.0 split: domain verticals (autoparts) moved out of core. These
+// paths live in the autoparts pack and reach it through the core gateway.
+const DOMAIN_PREFIXES = [
+  "/manager",
+  "/part_requests",
+  "/quotes",
+  "/orders",
+  "/suppliers",
+  "/supplier-orders",
+  "/garage",
+  "/fitment",
+  "/approvals",
+  "/actions",
+  "/hellopack",
+  "/conversations",
+  "/customers",
+  "/tasks",
+  "/company-policies",
+];
+
+function gatewayPath(path: string): string {
+  return DOMAIN_PREFIXES.some((prefix) => path.startsWith(prefix))
+    ? `${PACK_PREFIX}${path}`
+    : path;
+}
 
 export const TOKEN_KEY = "agentforge_token";
 export const USER_KEY = "agentforge_user";
@@ -30,7 +62,7 @@ export function getStoredUser<T = { is_superuser?: boolean }>(): T | null {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(`${API_URL}${gatewayPath(path)}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",

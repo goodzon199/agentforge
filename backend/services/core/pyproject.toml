@@ -1,0 +1,65 @@
+[project]
+name = "agentos-core"
+version = "0.1.0"
+description = "AgentOS platform core service (no automotive domain)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy>=2.0.30",
+    "psycopg[binary]>=3.2",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "redis>=5.0",
+    "openai>=1.40",
+    "alembic>=1.13",
+    "PyJWT>=2.8",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.2", "pytest-asyncio>=0.23", "ruff>=0.6"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "UP", "B", "SIM", "C4", "PIE", "TRY", "RUF", "DTZ"]
+ignore = ["E501", "EXE002", "RUF001", "RUF002", "RUF003", "TRY003", "UP042", "TRY300", "TRY301"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = [
+    "fastapi.Depends",
+    "fastapi.Query",
+    "fastapi.Header",
+    "fastapi.Path",
+    "fastapi.Body",
+    "fastapi.Cookie",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Response",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"app/models/*.py" = ["F821"]
+"alembic/versions/*.py" = ["W291"]
+"tests/*.py" = ["RUF059"]
+"app/core/redis.py" = ["BLE001", "S110"]
+"app/core/rate_limit.py" = ["BLE001", "S110"]
+"app/reliability/circuit_breaker.py" = ["BLE001"]
+"app/llm/client.py" = ["BLE001"]
+"app/services/analytics_service.py" = ["BLE001"]
+"app/agents/system.py" = ["BLE001"]

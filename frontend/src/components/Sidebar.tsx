@@ -6,20 +6,36 @@ import { useEffect, useState } from "react";
 import { api, clearToken, getToken } from "@/lib/api";
 import type { User } from "@/lib/types";
 
-const NAV = [
-  { href: "/", label: "Обзор", icon: "M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z" },
-  { href: "/companies", label: "Компании", icon: "M12 2 1 9l11 7 11-7-11-7zm0 20v-9" },
-  { href: "/agents", label: "Агенты", icon: "M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0zM12 14a7 7 0 0 0-7 7h14a7 7 0 0 0-7-7z" },
-  { href: "/conversations", label: "Диалоги", icon: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" },
-  { href: "/customers", label: "Клиенты", icon: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2m8-14a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm10 13v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" },
-  { href: "/orders", label: "Заказы", icon: "M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4H6zm0 0h12M3 6h18M16 10a4 4 0 0 1-8 0" },
-  { href: "/suppliers", label: "Поставщики", icon: "M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z" },
-  { href: "/tasks", label: "Задачи", icon: "M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2" },
-  { href: "/logs", label: "Логи", icon: "M4 6h16M4 12h16M4 18h10" },
-  { href: "/traces", label: "Трассировка", icon: "M5 3v4M3 5h4M6 17v4M4 19h4M13 3l9 9-9 9-9-9 9-9zM13 3v0c-1 1-1 2 0 3" },
-  { href: "/audit", label: "Аудит", icon: "M12 2v4m0 0a4 4 0 0 0 0 8m0-8a4 4 0 0 1 0 8m-6 8a8 8 0 1 1 12 0M3 22h18" },
-  { href: "/policies", label: "Политики компании", icon: "M10 2 20 7v10l-10 5-10-5V7l10-5zM10 22V7M20 7l-10 5M3 7l7 5" },
-  { href: "/settings", label: "Настройки", icon: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm7.4-3a7.4 7.4 0 0 0-.1-1l2.1-1.6-2-3.4-2.5 1a7.4 7.4 0 0 0-1.7-1l-.4-2.6h-4l-.4 2.6a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.4L4.7 11a7.4 7.4 0 0 0 0 2l-2.1 1.6 2 3.4 2.5-1a7.4 7.4 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.4-2.1-1.6c.1-.3.1-.7.1-1z" },
+const NAV_GROUPS = [
+  {
+    title: "Платформа",
+    items: [
+      { href: "/overview", label: "Обзор", icon: "M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z" },
+      { href: "/companies", label: "Компании", icon: "M12 2 1 9l11 7 11-7-11-7zm0 20v-9" },
+      { href: "/agents", label: "Агенты", icon: "M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0zM12 14a7 7 0 0 0-7 7h14a7 7 0 0 0-7-7z" },
+      { href: "/workflows", label: "Workflows", icon: "M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2" },
+      { href: "/tools", label: "Tools", icon: "M10 20l4-16m-4 16a2 2 0 1 1 0-4 2 2 0 0 1 0 4zm4-16a2 2 0 1 1 0-4 2 2 0 0 1 0 4z" },
+      { href: "/packs", label: "Packs", icon: "M12 2 1 9l11 7 11-7-11-7zm0 20v-9M5 12v7l7 4 7-4v-7" },
+      { href: "/approvals", label: "Approvals", icon: "M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" },
+      { href: "/usage", label: "Usage", icon: "M3 3v18h18M7 15l4-5 4 3 5-7" },
+      { href: "/traces", label: "Трассировка", icon: "M5 3v4M3 5h4M6 17v4M4 19h4M13 3l9 9-9 9-9-9 9-9zM13 3v0c-1 1-1 2 0 3" },
+      { href: "/audit", label: "Аудит", icon: "M12 2v4m0 0a4 4 0 0 0 0 8m0-8a4 4 0 0 1 0 8m-6 8a8 8 0 1 1 12 0M3 22h18" },
+      { href: "/settings", label: "Настройки", icon: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm7.4-3a7.4 7.4 0 0 0-.1-1l2.1-1.6-2-3.4-2.5 1a7.4 7.4 0 0 0-1.7-1l-.4-2.6h-4l-.4 2.6a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.4L4.7 11a7.4 7.4 0 0 0 0 2l-2.1 1.6 2 3.4 2.5-1a7.4 7.4 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.4-2.1-1.6c.1-.3.1-.7.1-1z" },
+    ],
+  },
+  {
+    title: "AutoParts",
+    items: [
+      { href: "/", label: "Рабочий стол", icon: "M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z" },
+      { href: "/conversations", label: "Диалоги", icon: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" },
+      { href: "/customers", label: "Клиенты", icon: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2m8-14a4 4 0 1 0 0-8 4 4 0 0 0 0 8zm10 13v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" },
+      { href: "/orders", label: "Заказы", icon: "M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4H6zm0 0h12M3 6h18M16 10a4 4 0 0 1-8 0" },
+      { href: "/suppliers", label: "Поставщики", icon: "M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z" },
+      { href: "/tasks", label: "Задачи", icon: "M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2M9 5a2 2 0 0 0 2 2h2a2 2 0 0 0 2-2M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2" },
+      { href: "/logs", label: "Логи", icon: "M4 6h16M4 12h16M4 18h10" },
+      { href: "/policies", label: "Политики компании", icon: "M10 2 20 7v10l-10 5-10-5V7l10-5zM10 22V7M20 7l-10 5M3 7l7 5" },
+    ],
+  },
 ];
 
 export function Sidebar() {
@@ -53,26 +69,35 @@ export function Sidebar() {
         </div>
       </div>
 
-      <nav className="flex-1 space-y-1 px-3 py-4">
-        {NAV.map((item) => {
-          const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition ${
-                active
-                  ? "bg-accent/15 font-medium text-accent-soft"
-                  : "text-slate-400 hover:bg-surface-hover hover:text-slate-200"
-              }`}
-            >
-              <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d={item.icon} />
-              </svg>
-              {item.label}
-            </Link>
-          );
-        })}
+      <nav className="flex-1 space-y-4 overflow-y-auto px-3 py-4">
+        {NAV_GROUPS.map((group) => (
+          <div key={group.title}>
+            <div className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-slate-600">
+              {group.title}
+            </div>
+            <div className="space-y-1">
+              {group.items.map((item) => {
+                const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm transition ${
+                      active
+                        ? "bg-accent/15 font-medium text-accent-soft"
+                        : "text-slate-400 hover:bg-surface-hover hover:text-slate-200"
+                    }`}
+                  >
+                    <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <path d={item.icon} />
+                    </svg>
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
 
       <div className="border-t border-surface-border px-5 py-4">
