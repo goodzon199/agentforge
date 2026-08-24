@@ -1,7 +1,7 @@
 # Pack Security & Isolation (Sprint 5.9)
 
-Статус: **проект контракта (5.9.0)** — утверждается до начала реализации auth,
-чтобы потом не переделывать интеграцию Core ↔ Pack.
+Статус: **контракт утверждён** (5.9.0, с поправками ревью) — реализация идёт
+по этапам 5.9.1–5.9.6.
 
 ---
 
@@ -12,6 +12,9 @@
 
 Следствие: наш собственный AutoParts моделируется как потенциально взломанный.
 «Свой» код не получает доверительных послаблений — только явные разрешения.
+Самая опасная дыра будущего Marketplace закрыта заранее: **глобальный
+credential пака физически не может выбрать tenant** — доступ к данным компании
+существует только внутри workload-токенов, которые выдаёт сам Core.
 
 ---
 
@@ -79,11 +82,11 @@ Frontend / Public API
 - личность пака при вызове Core — само-заявленный заголовок `X-Pack-Name`
   (`services/core/app/api/internal.py::_require_pack_permission`);
 - права пака = `pack.permissions` из манифеста; **declared ≡ granted**, базы
-  «выданных» разрешений нет (`services/core/app/models/pack.py`);
+  «выданных» разрешений нет;
 - checksum манифеста сверяется при регистрации/healthcheck (5.7), но это
   self-declared checksum;
-- tenant-scoping на Context API отсутствует: `GET /internal/context/customers/{id}`
-  возвращает клиента любого арендатора паку с правом `customer.read`.
+- tenant-scoping на Context API отсутствует: клиент любого арендатора
+  возвращается паку, у которого в манифесте есть `customer.read`.
 
 Отсюда — все девять сценариев из матрицы ниже сегодня либо проходимы целиком,
 либо проходимы частично. Это фиксируется честно: текущий токен — наследие
@@ -91,26 +94,27 @@ Frontend / Public API
 
 ---
 
-## 4. Матрица атак (обязана быть покрыта тестами 5.9)
+## 4. Матрица атак (обязана быть покрыта тестами спринта)
 
-| # | Атака | Вектор | Обязательное поведение | Где enforcement | Пункт |
+| # | Атака | Вектор | Обязательное поведение | Где enforcement | Этап |
 |---|---|---|---|---|---|
-| A1 | Pack impersonation | Beauty шлёт `X-Pack-Name: autoparts` | невозможно: личность берётся из проверенной подписи токена, не из заголовка | JWT-валидация в Core | 5.9.1–5.9.2 |
-| A2 | Permission escalation | манифест добавил `order.create` → пак зовёт API | `403 PACK_PERMISSION_DENIED`: effective = declared ∩ granted из БД | permission-gate Core | 5.9.3 |
-| A3 | Cross-tenant access | пак запрашивает клиента компании B | `403`: объект вне `tenant_id` токена | object-scope в Context/API Core | 5.9.5 |
-| A4 | Cross-pack access | Beauty дёргает `/internal/...` AutoParts напрямую | невозможно: у Beauty нет секрета AutoParts; токен Beauty не проходит аудит пака-адресата | per-pack credentials + aud | 5.9.1–5.9.2 |
-| A5 | Token theft/replay | украден долгоживущий общий токен | окно жизни ≤ 5 минут; `jti`; нет master-secret у пака | TTL + ротация + jti-cache | 5.9.2 |
-| A6 | Manifest tampering | зарегистрирован artifact X, запущен Y | reject/degraded: расхождение артефакта с зафиксированным checksum | healthcheck + реестр | 5.9.1 (усиление 5.7) |
-| A7 | Disabled pack жив | пак `disabled` продолжает слать запросы | `403 PACK_DISABLED` немедленно, независимо от живого токена | статус пака проверяется по БД на каждый вызов | 5.9.2 |
-| A8 | Removed permission | админ снял `customer.read`, старый токен жив | окно риска ≤ TTL (5 мин); фактически мгновенно — effective читается из БД | permission-gate Core | 5.9.2–5.9.3 |
-| A9 | Forged tenant/context | пак подменяет `company_id`/`customer_id`/`conversation_id` | Core повторно авторизует объект: belongs-to-tenant иначе `403` | object-scope в Core | 5.9.5 |
+| A1 | Pack impersonation | Beauty шлёт `X-Pack-Name: autoparts` | невозможно: личность берётся из проверенной подписи токена, не из заголовка | JWT-валидация в Core | 5.9.1, 5.9.4 |
+| A2 | Permission escalation | манифест добавил `order.create` → пак зовёт API | `403 PACK_PERMISSION_DENIED`: effective = declared ∩ granted из БД | permission-gate Core | 5.9.2 |
+| A3 | Cross-tenant access | пак запрашивает клиента компании B | `403 TENANT_FORBIDDEN`: tenant берётся из workload-токена, пак его не выбирает | object-scope в Core | 5.9.3 |
+| A4 | Cross-pack access | Beauty дёргает `/internal/...` AutoParts напрямую | невозможно: у Beauty нет dispatch-секрета AutoParts; токен Beauty не проходит аудит пака-адресата | per-pack dispatch secret + aud | 5.9.1 |
+| A5 | Token theft/replay | украден долгоживущий общий токен | окно жизни ≤ 5 минут; `jti`; master-secret Core никогда не покидает Core | TTL + ротация + jti-cache | 5.9.2–5.9.4 |
+| A6 | Manifest tampering | зарегистрирован artifact X, запущен Y | reject/degraded: расхождение артефакта с зафиксированным checksum | healthcheck + реестр | усиление 5.7 |
+| A7 | Disabled pack жив | пак `disabled` продолжает слать запросы | `403 PACK_DISABLED` немедленно, независимо от живого токена | статус identity проверяется по БД на каждый вызов | 5.9.4 |
+| A8 | Removed permission | админ снял `customer.read`, старый токен жив | окно риска ≤ TTL (5 мин); effective читается из БД на каждый вызов | permission-gate Core | 5.9.2–5.9.3 |
+| A9 | Forged tenant/context | пак подменяет `company_id`/`customer_id`/`conversation_id` | Core повторно авторизует объект: belongs-to-tenant иначе отказ | object-scope в Core | 5.9.3 |
+| A10 | Rotation bypass | украден старый секрет после ротации | мгновенный `401`: `credential_version` токена ≠ версии identity | cv-check при каждом вызове | 5.9.1 |
 
-Критерий готовности спринта: каждый пункт A1–A9 — автотест
-(adversarial suite, 5.9.6), падающий на ветке без фиксов.
+Критерий готовности спринта: ключевые пункты матрицы — автотесты
+(adversarial suite EvilPack, 5.9.6), падающие на ветке без фиксов.
 
-Коды ошибок стандартизируются: `PACK_UNAUTHENTICATED`,
-`PACK_PERMISSION_DENIED`, `PACK_DISABLED`, `TENANT_FORBIDDEN`,
-`OBJECT_NOT_FOUND` (не раскрываем существование чужого объекта).
+Коды ошибок стандартизируются: `PACK_UNAUTHENTICATED`, `PACK_PERMISSION_DENIED`,
+`PACK_DISABLED`, `PACK_REVOKED`, `TENANT_FORBIDDEN`, `OBJECT_NOT_FOUND`
+(не раскрываем существование чужого объекта).
 
 ---
 
@@ -121,104 +125,149 @@ Frontend / Public API
 Каждый установленный пак имеет собственную identity вместо «общего токена на
 все сервисы».
 
-Новая таблица `pack_identities`:
-
 ```text
 PackIdentity
-  id                 uuid pk
-  pack_id            fk -> packs.name          # уникально среди активных
-  publisher_id       str                       # из манифеста/реестра
-  service_id         str                       # логическое имя сервиса пака
-  status             active | suspended | revoked
-  credential_hash    str                       # хеш секрета пака (PHC-формат)
-  credential_version int                       # инкремент при каждой ротации
-  created_at / rotated_at / revoked_at
+  id                     uuid pk
+  pack_id                str, unique среди активных
+  service_id             str            # логическое имя сервиса пака
+  status                 active | disabled | revoked
+  bootstrap_secret_hash  str            # PBKDF2 — проверка секрета пака
+  dispatch_secret_hash   str            # sha256 — сверка смонтированного материала
+  credential_version     int            # инкремент при каждой ротации
+  created_at / rotated_at / revoked_at / last_authenticated_at
 ```
+
+Два разных секрета на identity (ключевое решение контракта):
+
+| Секрет | Кто хранит plaintext | Для чего | Хеш в БД |
+|---|---|---|---|
+| `bootstrap_secret` | только пак | подтвердить «я действительно AutoParts» на `POST /internal/token` | PBKDF2 |
+| `dispatch_secret` | **Core и пак** (HS256 v1) | Core подписывает диспетчерские токены `aud=pack:<name>`; пак их верифицирует | sha256 (сверка материала) |
+
+Компрометация Beauty не позволяет подписать токен для AutoParts: ключ подписи
+у каждого пака свой. Позже HS256 заменяется на Ed25519/JWKS без изменения
+`PackIdentityService`.
 
 Принципы:
 
-- секрет генерирует **Core** при `register`/`enable`, показывается **один раз**
-  (ответ регистрации), хранится только хешем;
-- доставка секреты паку — через env конфигурации стека (`PACK_CREDENTIAL_<NAME>`),
-  не через репозиторий;
-- `disable` пака → `status=suspended`; `enable` → обратно `active`;
-  `uninstall` → `revoked` (identity не переиспользуется);
-- ротация: новая версия секрета, старая инвалидируется немедленно
-  (credential_version пишется в токен для диагностики);
-- удаление общего `X-Internal-Token` как конечной модели безопасности
-  (переходный период совместимости см. §7).
+- секреты генерирует **Core** (`secrets.token_urlsafe(32)` — ≥256 бит),
+  формат `<pack>_sec_<43 символов>`;
+- plaintext показывается **один раз** в ответе provision/rotate; в БД — только
+  хеши; в репозитории/.env.example — никогда;
+- `disable` пака → `status=disabled`; `enable` → `active`; `uninstall` →
+  `revoked` (identity переживает удаление пака и не переиспользуется);
+- ротация: новая пара секретов + `credential_version += 1`; старые секреты и
+  все выданные до этого токены инвалидируются немедленно (cv-check);
+- `last_authenticated_at` обновляется при успешной выдаче токена.
 
-### 5.9.2 Short-Lived Service Tokens
+Secret delivery (dev):
 
-Вместо статического токена Core выдаёт короткоживущий JWT:
+```text
+.secrets/
+├── autoparts-bootstrap
+├── autoparts-dispatch
+├── beauty-bootstrap
+└── beauty-dispatch
+```
+
+`.gitignore`: `.secrets/`. Compose монтирует каталог как docker secret volume
+(`/run/secrets/pack-credentials:ro`) в core-api и в каждый пак. Production
+потом переезжает на Vault/KMS без изменения `PackIdentityService`.
+
+### 5.9.2 Два типа токенов
+
+Зафиксировано как архитектурное решение: **не бывает универсального Pack JWT**.
+
+**Service token** — подтверждает личность пака, ничего больше.
+
+```text
+Pack                                 Core
+  |  POST /internal/token            |
+  |  X-Pack-Id / X-Pack-Credential   |
+  |--------------------------------->|  hash-проверка, статус identity
+  |  <-- service JWT (exp=+300s) ----|
+```
+
+Claims: `{iss:"agentos-core", sub:"pack:<name>", aud:"agentos-internal",
+pack_id, jti, iat, exp, credential_version}`. Без `tenant_id`, без
+`permissions`. Годится для health, registration handshake, credential refresh,
+service-level операций. **Пак не выбирает tenant_id при получении токена** —
+эндпоинт его просто не принимает.
+
+**Workload token** — создаётся самим Core во время dispatch:
+
+```text
+Core receives customer message
+        ↓
+Core knows company/task/conversation
+        ↓
+Core creates workload JWT
+        ↓
+AutoParts receives: context + workload_token
+        ↓
+AutoParts → Core Context API using same workload_token
+```
 
 ```json
 {
   "iss": "agentos-core",
-  "sub": "pack:beauty",
   "aud": "agentos-internal",
-  "pack_id": "beauty",
+  "sub": "pack:autoparts",
+  "pack_id": "autoparts",
   "tenant_id": "...",
-  "permissions": [
-    "customer.read",
-    "conversation.read",
-    "calendar.read",
-    "calendar.write"
-  ],
+  "task_id": "...",
+  "dispatch_id": "...",
+  "permissions": ["customer.read", "conversation.read"],
+  "credential_version": 3,
   "jti": "...",
-  "iat": 1787300000,
-  "exp": 1787300300
+  "exp": "now + 5m"
 }
 ```
 
-Параметры:
+Именно workload-токеном пак ходит в `/internal/context/*`,
+`/internal/actions/*`, `/internal/memory/*`. Pack физически не может сказать:
+«дай мне токен для компании B».
 
-- **TTL = 5 минут.** Пак обновляет токен заранее (порог 60с до exp).
-- Подпись: HS256 ключом Core (`INTERNAL_JWT_KEY`, отдельно от legacy-токена);
-  переход на асимметрию (Ed25519/JWKS) — за кадром v1, отмечено в non-goals.
-- `permissions` в клеймах — **информационные** (для диагностики и быстрого
-  fail-fast на паке). Источник истины для авторизации — БД Core:
-  `effective = declared ∩ granted` вычисляется на каждый запрос.
-- `aud` различает назначение: `agentos-internal` — вызовы пака в Core;
-  `pack:<name>` — диспетчерские токены Core→Pack (украденный токен одного пака
-  не принимается другим).
-- `jti` + короткий TTL: replay-кэш (redis, окно ≤ TTL) — hardening-пункт,
-  включается после базовой реализации.
+**Dispatch token (Core→Pack)** — подписывается per-pack `dispatch_secret`,
+`aud = pack:<name>`; передаёт `task_id`, `dispatch_id`, `tenant_id`, `exp`,
+`jti`. Повторное исполнение блокирует существующая идемпотентность по
+`dispatch_id`; украденный токен Beauty не принимается AutoParts.
 
-Жизненный цикл:
+**Rotation/revoke — мгновенная инвалидация:**
 
 ```text
-Pack                                Core
-  |  POST /internal/token            |
-  |  X-Pack-Id / X-Pack-Credential   |
-  |--------------------------------->|  проверяет identity: hash, status=active
-  |  <-- JWT (exp=+300s) ------------|
-  |  ...вызовы с Bearer JWT...       |  каждый вызов: подпись, exp,
-  |                                  |  pack.status, effective-perms из БД
+token.credential_version = 2
+DB identity.credential_version = 3
+→ 401
 ```
 
-Пак не получает master secret Core никогда. Компрометация секрета пака
-компрометирует только этого пака и ограничена TTL'ами выданных им токенов.
+TTL 5 минут ограничивает остаточное окно, но основной барьер — cv-check на
+каждом вызове. Подпись service/dispatch/workload токенов — HS256;
+`INTERNAL_JWT_KEY` (ключ service/workload токенов) никогда не покидает Core;
+пакам он не нужен — они получают готовые bearer-токены.
 
 ### 5.9.3 Declared vs Granted Permissions
 
 Разработчик пака не может сам себе выдать право изменением манифеста.
 
-- `manifest.permissions` → колонка `packs.declared_permissions`
-  (синхронизируется при register/update автоматически);
-- `packs.granted_permissions` — управляет **админ платформы**, руками;
+- `manifest.permissions` → `declared_permissions` (синхронизируется при
+  register/update автоматически);
+- `granted_permissions` — управляет **админ платформы**, явно;
 - эффективные права: `effective = declared ∩ granted`.
 
-Политика начальной выдачи (компромисс совместимости):
+Политика выдачи:
 
-- первая регистрация пака: `granted := declared` (демо-стек работает как раньше);
-- обновление манифеста с НОВЫМИ разрешениями: новые права появляются только в
-  `declared` и **не действуют**, пока админ их явно не выдаст
-  (в UI/логе — подсказка «требуется грант»);
+- **migration bootstrap (только для существующих доверенных builtin-паков**
+  autoparts/beauty): однократный перенос declared → granted при миграции,
+  иначе живой стек сломается;
+- **любой новый пак**: register → `granted_permissions = []` → admin reviews →
+  explicit grant. Иначе EvilPack добавит себе `customer.read`, `order.create`,
+  `memory.read` первой же регистрацией, и security model проиграна ещё до
+  начала.
 
-Админ-API: `GET/PUT /api/v1/packs/{name}/permissions`
-(выдать можно только подмножество `declared`; попытка гранта незаявленного —
-`422`). Изменения пишутся в audit log (`permission.grant` / `permission.revoke`).
+Админ-API: `GET/PUT /api/v1/packs/{name}/permissions` (выдать можно только
+подмножество declared; иначе `422`). Изменения пишутся в audit log
+(`permission.grant` / `permission.revoke`).
 
 ---
 
@@ -227,7 +276,7 @@ Pack                                Core
 Все pull-эндпоинты Core (`/internal/context/*`) и мутирующие операции паков
 обязаны:
 
-1. взять `tenant_id` из **проверенного** токена (не из тела запроса);
+1. взять `tenant_id` из **проверенного workload-токена** (не из тела запроса);
 2. проверить, что запрошенный объект (customer/conversation/part_request…)
    принадлежит этому tenant;
 3. чужой объект отвечать `403 TENANT_FORBIDDEN` (или `404 OBJECT_NOT_FOUND`
@@ -242,12 +291,15 @@ Pack                                Core
 | Этап | Core→Pack | Pack→Core |
 |---|---|---|
 | сейчас (v0.5.1) | `X-Internal-Token` | `X-Internal-Token` + `X-Pack-Name` |
-| 5.9.1–5.9.3 | `X-Internal-Token` (временно) | Bearer JWT; legacy тоже принимается |
-| 5.9.4–5.9.5 | подписанный диспетчерский токен (`aud=pack:<name>`) | только JWT |
-| финал 5.9 | — | `X-Internal-Token` отклоняется (кроме explicit dev-flag) |
+| 5.9.1 | + подписанный dispatch token (когда материал смонтирован) | + service JWT через `POST /internal/token` (legacy тоже принимается) |
+| 5.9.2–5.9.3 | dispatch token везде | workload JWT для данных; service JWT для service-level |
+| 5.9.4 enforcement | только dispatch token | только JWT; legacy отклоняется |
 
-Флаг совместимости `LEGACY_INTERNAL_TOKEN=true` (default true на время
-спринта, в проде финала — false).
+Флаг совместимости `LEGACY_INTERNAL_TOKEN=true`. Пока он включён, каждое
+принятие legacy-токена пишет audit-событие **`pack.auth.legacy_used`** —
+забыть включённым флаг невозможно, видно в аудите. В конце спринта:
+`environment=production && LEGACY_INTERNAL_TOKEN=true` → **startup failure**:
+невозможно случайно выпустить production со старой дырой навсегда.
 
 ## 8. Non-goals этого спринта
 
@@ -265,14 +317,24 @@ Pack                                Core
 
 | Пункт | Содержание | Готовность |
 |---|---|---|
-| 5.9.0 | этот документ: threat model + security contract | [x] |
-| 5.9.1 | `PackIdentity`: модель, миграция, выдача/ротация/отзыв секрета, env-доставка | [ ] |
-| 5.9.2 | token-endpoint + JWT-валидация (iss/aud/exp/status/effective-perms), коды ошибок | [ ] |
-| 5.9.3 | declared/granted: миграция, admin API, effective-формула, audit-события | [ ] |
-| 5.9.4 | диспетчерские токены Core→Pack (`aud=pack:<name>`) + верификация в shared SDK | [ ] |
-| 5.9.5 | tenant re-authorization на Context API и мутирующих эндпоинтах | [ ] |
-| 5.9.6 | adversarial suite: A1–A9 автотестами + ручной прогон на живом стеке + раздел в docs | [ ] |
+| 5.9.0 | этот документ: threat model + security contract (утверждён с поправками) | [x] |
+| 5.9.1 | PackIdentity: модель, миграция, генерация секретов, one-time reveal, hash storage, rotation, revocation, credential_version, `POST /internal/token` → service JWT, per-pack dispatch credential, compose secrets | [ ] |
+| 5.9.2 | declared/granted permissions: миграция bootstrap для builtin-паков, admin API, effective-формула | [ ] |
+| 5.9.3 | workload/tenant delegation: workload-токены при dispatch, Context API по ним, object-scope | [ ] |
+| 5.9.4 | enforcement всех `/internal/*`: только JWT, legacy off, коды ошибок | [ ] |
+| 5.9.5 | audit/revocation: `pack.auth.legacy_used`, события грантов, UI отзывов | [ ] |
+| 5.9.6 | EvilPack adversarial suite: автотесты A1–A10 | [ ] |
 
-DoD спринта: все пункты [x]; adversarial-тесты красные на main без фиксов и
-зелёные с ними; legacy-токен выключается флагом; E2E 5.8.3 (webchat, duplicate
-dispatch, beauty, hellopack) остаётся зелёным; ruff/pytest/tsc/build чистые.
+**DoD 5.9.1:**
+
+- [ ] AutoParts secret ≠ Beauty secret
+- [ ] bootstrap secret AutoParts → получает service JWT AutoParts
+- [ ] неверный секрет → 401
+- [ ] Beauty secret с заявкой `autoparts` → 401
+- [ ] после ротации старый секрет → 401
+- [ ] revoked identity → выдача токена 403
+- [ ] token со старым credential_version → отклонён
+- [ ] core→autoparts JWT (`aud=pack:autoparts`) принят автопартсом
+- [ ] тот же JWT → Beauty → отклонён
+- [ ] restart стека → identities/credentials остаются валидны
+- [ ] в БД и репозитории нет plaintext секретов
