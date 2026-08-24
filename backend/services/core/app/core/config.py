@@ -78,7 +78,7 @@ class Settings(BaseSettings):
 
     # Orchestrator
     orchestrator_workers: int = 4
-    task_queue_name: str = "agentos:tasks"
+    task_queue_name: str = "agentos:core:tasks"
 
     # Pilot analytics + SLA (sprint 3.1): target duration per pipeline stage
     # (seconds) used by the dashboard to measure the share of tasks within SLA.
@@ -100,7 +100,7 @@ class Settings(BaseSettings):
     task_max_retries: int = 2
     # Replay chain guard: how many generations of "Повторить" a task may spawn.
     task_max_replay_depth: int = 5
-    dlq_queue_name: str = "agentos:tasks:dead"
+    dlq_queue_name: str = "agentos:core:tasks:dead"
 
     # Unified RetryPolicy (transient-only, exponential backoff + jitter).
     retry_max_attempts: int = 2

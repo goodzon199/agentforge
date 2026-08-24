@@ -18,7 +18,7 @@ export MSYS_NO_PATHCONV=1
 DUMP="${1:?usage: db_restore.sh <path-to-dump>}"
 [ -f "${DUMP}" ] || { echo "[restore] no such file: ${DUMP}" >&2; exit 1; }
 
-DB_CONTAINER="${DB_CONTAINER:-agentos-db}"
+DB_CONTAINER="${DB_CONTAINER:-agentos-db-core}"
 PG_USER="${PG_USER:-agentos}"
 PG_DB="${PG_DB:-agentos}"
 RESTORE_TARGET="${RESTORE_TARGET:-verify}"

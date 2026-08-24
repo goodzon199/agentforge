@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 from typing import Any
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 try:
     import redis as redis_lib
@@ -90,9 +93,21 @@ class RedisClient:
             return None
         try:
             _, raw = self._client.blpop(key, timeout=timeout)  # type: ignore[union-attr]
-            return json.loads(raw) if raw else None
         except Exception:
             return None
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except Exception:
+            # The element was already consumed: never drop it silently.
+            logger.exception("Некорректное сообщение в очереди %s (перемещено в DLQ)", key)
+            with contextlib.suppress(Exception):
+                self._client.rpush(self._dlq_for(key), raw)  # type: ignore[union-attr]
+            return None
+
+    def _dlq_for(self, key: str) -> str:
+        return settings.dlq_queue_name if key == settings.task_queue_name else f"{key}:dead"
 
     def push_raw(self, key: str, raw_value: str) -> None:
         """Push an already-JSON-encoded string onto a list unchanged."""

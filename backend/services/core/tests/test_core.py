@@ -66,9 +66,15 @@ def test_login_throttle_ip_budget(db_session):
     import uuid
 
     from app.core.config import settings
-    from app.core.rate_limit import LoginThrottle
+    from app.core.rate_limit import LoginThrottle, RateLimiter
+    from app.core.redis import RedisClient
 
-    throttle = LoginThrottle()
+    # Hermetic: pin the limiter to its in-memory store. With a reachable
+    # Redis each hit() pays a ping, and on a slow host the 25-call loop can
+    # outlive the rate window, resetting the counter mid-test.
+    throttle = LoginThrottle(
+        limiter=RateLimiter(RedisClient(settings.redis_url, enabled=False))
+    )
     ip = f"198.51.{uuid.uuid4().hex[:8]}"  # unique per run (Redis keys persist between runs)
     allowed = sum(throttle.request_allowed(ip) for _ in range(settings.login_rate_per_minute + 5))
     assert allowed == settings.login_rate_per_minute

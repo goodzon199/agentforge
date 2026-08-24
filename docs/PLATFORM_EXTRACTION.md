@@ -135,6 +135,7 @@ backend/
       app/                 # FastAPI app (moved domain code)
       tests/
   docker-compose.services.yml   # core-api, autoparts-api, db-core, db-autoparts
+  (позже переименован в docker-compose.yml)
 ```
 
 `app/`, `alembic/` (old), `tests/` stay on `main` for v0.4.7; this branch
@@ -154,7 +155,7 @@ services pass E2E.
 7. [x] internal HTTP contract + auth token
 8. [x] orchestration dispatch via contract (remove worker.py:53 direct import)
 9. [x] event: customer-confirmed (breaks #3)
-10. [x] docker-compose.services.yml: core-api, autoparts-api, db-core, db-autoparts
+10. [x] docker-compose.services.yml (позже переименован в docker-compose.yml): core-api, autoparts-api, db-core, db-autoparts
 11. [x] HelloPack: minimal domain package example (endpoint + service + test)
 12. [ ] DoD: core tests pass without autoparts; autoparts tests pass; E2E green
 
@@ -627,10 +628,13 @@ autoparts:8012, beauty:8013) и покрыты тестами.
 
 ## 19. DoD 5.0 — чистый пересбор микросервисного стека
 
-### Пересбор (`docker-compose.services.yml`)
+### Пересбор (`docker-compose.yml`)
 
 - стоп старого монолита: `docker compose -f docker-compose.yml down` (БЕЗ `-v`,
-  volume `agentforge_ollama` с моделями переиспользован через `external: true`)
+  volume `agentforge_ollama` с моделями переиспользован через `external: true`).
+  Историческая справка: legacy-композиция монолита удалена в ветке
+  `chore/remove-legacy-monolith`; `docker-compose.services.yml` переименован
+  в `docker-compose.yml` и стал единственной схемой запуска
 - `agentforge_pgdata` удалён отдельно — обе БД поднимаются с нуля
 - образы: `build --no-cache` (6 образов: db-core, db-autoparts, redis, ollama,
   mailhog, frontend, core-api, autoparts-api, beauty-api, migrate-*)
@@ -790,4 +794,46 @@ contract) → PartRequest → clarification → ответ через Core
 паков → workflow-вертикали с human approval → usage/traces/audit/pilot → restart
 с сохранением состояния» проходит на живом микросервисном стеке (core:8011,
 autoparts:8012, beauty:8013, frontend:3000).
+
+---
+
+## 21. Sprint 5.8.4 — удаление legacy-монолита (`chore/remove-legacy-monolith`)
+
+Чистый deletion PR: `backend/app`, `backend/alembic`, `backend/tests`,
+`backend/Dockerfile`, `requirements*`, `pyproject.toml`, корневой
+`docker-compose.yml` монолита и `.env.example` удалены; README переписан под
+services-стек; `docker-compose.services.yml` переименован в `docker-compose.yml`.
+
+### Runtime-баг, найденный DoD (исправлен в этой же ветке)
+
+**Коллизия имён очередей.** Core и autoparts унаследовали от монолита один ключ
+`agentos:tasks` при разных БД: воркер пака, забрав задачу core, не находил её в
+своей БД и молча терял (`if task is not None`), задача навсегда оставалась
+`queued`. Симптом проявился только после чистого пересбора: до удаления legacy
+гонку маскировал общий монолит.
+
+- **Фикс:** неймспейсинг через уже существовавшие настройки —
+  `agentos:core:tasks` / `agentos:autoparts:tasks` (+ DLQ
+  `…:tasks:dead`); литералы `submit`/`poll` заменены на
+  `settings.task_queue_name`.
+- **Укрепление:** `RedisClient.pop()` больше не глотает битые сообщения —
+  некорректный JSON логируется с traceback, raw-сообщение переносится в DLQ.
+- **Тест-флейк:** `test_login_throttle_ip_budget` переведён на in-memory
+  лимитер (герметично): с живым redis каждый `hit()` платит ping, и на
+  медленном хосте цикл из 25 вызовов переживал окно 60с, сбрасывая счётчик.
+
+### DoD (проверено на живом стеке)
+
+- clean build `--no-cache` + пустые БД → миграции с нуля (core →
+  `9c1e5f6a7b8c`, autoparts → `a1c7e90d4b52`) → все сервисы healthy;
+- E2E 11/11: webchat (ответ агента), autoparts `sales_pipeline` c
+  `requires_search=true` → `awaiting_approval` → approve через
+  `/api/v1/platform/approvals/{id}/approve`, beauty `booking_pipeline`
+  → completed, pilot analytics, traces, audit, hellopack через gateway;
+- restart всего стека → паки active, задачи сохранены, webchat работает;
+- ruff чист по всем пакетам; тесты: shared 48, core 56, autoparts 19,
+  beauty 13; frontend `tsc --noEmit` + `next build` зелёные.
+
+За чистую уборку без новых фич тег не ставится (максимум v0.5.1 при
+необходимости). Следующий шаг — sprint 5.9 Pack Security & Isolation.
 

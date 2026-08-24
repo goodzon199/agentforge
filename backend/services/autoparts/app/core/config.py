@@ -65,7 +65,7 @@ class Settings(BaseSettings):
 
     # Orchestrator
     orchestrator_workers: int = 4
-    task_queue_name: str = "agentos:tasks"
+    task_queue_name: str = "agentos:autoparts:tasks"
 
     # Supplier search (sprint 2.3)
     supplier_search_timeout: float = 15.0
@@ -101,7 +101,7 @@ class Settings(BaseSettings):
     task_max_retries: int = 2
     # Replay chain guard: how many generations of "Повторить" a task may spawn.
     task_max_replay_depth: int = 5
-    dlq_queue_name: str = "agentos:tasks:dead"
+    dlq_queue_name: str = "agentos:autoparts:tasks:dead"
 
     # Unified RetryPolicy (transient-only, exponential backoff + jitter).
     retry_max_attempts: int = 2
