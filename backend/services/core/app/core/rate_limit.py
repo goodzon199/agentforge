@@ -181,7 +181,7 @@ class LoginThrottle:
             try:
                 if self._fail_script is None:
                     self._fail_script = client.register_script(self._FAIL_SCRIPT)
-                fails, locked = self._fail_script(
+                _fails, _locked = self._fail_script(
                     keys=[fail_key, lock_key],
                     args=[self._s.login_lock_seconds, self._s.login_failures_before_lock],
                 )

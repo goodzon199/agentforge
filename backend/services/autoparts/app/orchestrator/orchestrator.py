@@ -75,7 +75,7 @@ class Orchestrator:
                 input_data=task.input_data or {},
                 priority=task.priority.value,
             )
-            redis_client.push("agentos:tasks", message.to_dict())
+            redis_client.push(settings.task_queue_name, message.to_dict())
             return task
 
         # Synchronous fallback: process inline.
@@ -329,13 +329,13 @@ class Orchestrator:
 
     def poll(self, db: Session) -> None:
         """Consume a single queued message (blocking up to 1s)."""
-        raw = redis_client.pop("agentos:tasks")
+        raw = redis_client.pop(settings.task_queue_name)
         if raw is None:
             return
         if emergency_switch.is_engaged():
             # Global pause: leave the message in the queue untouched and idle.
             # The task is processed later when the switch is released.
-            redis_client.push_raw("agentos:tasks", raw)
+            redis_client.push_raw(settings.task_queue_name, raw)
             time.sleep(1.0)
             return
         message = TaskMessage.from_dict(raw)

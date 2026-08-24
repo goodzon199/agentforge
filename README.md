@@ -422,22 +422,41 @@ Beauty Pack (Reception/Booking/Sales/Reminder) и RealEstate Pack
 # 1. Скопировать окружение (по умолчанию LLM — локальная Ollama, ключ не нужен)
 cp .env.example .env
 
-# 2. Поднять стек: PostgreSQL + Redis + MailHog + Ollama + backend + frontend
+# 2. Поднять платформенный стек:
+#    core + autoparts + beauty (паки) + frontend + redis + mailhog + ollama
 #    Первый запуск скачает модель LLM в Ollama (~2 ГБ) и соберёт образы.
 docker compose up --build
 ```
 
 После запуска:
 
-- Frontend (AgentForge UI): http://localhost:3000
-- Backend API: http://localhost:8000 — Swagger: http://localhost:8000/docs
+- Frontend (AgentOS UI): http://localhost:3000
+- Core API (платформенный gateway): http://localhost:8011 — Swagger: http://localhost:8011/docs
+- AutoParts pack API: http://localhost:8012, Beauty pack API: http://localhost:8013
 - **MailHog** (входящие письма EmailAgent): http://localhost:8025
-- PostgreSQL: localhost:5432, Redis: localhost:6379
+- PostgreSQL: core localhost:5433, autoparts localhost:5434; Redis: localhost:6379
 
 Первый экран — **Вход**: админ по умолчанию `admin@agentos.local` / `admin123`
 (меняется через `SEED_ADMIN_*` в `.env`). После входа — Обзор: Компании / Агенты /
-Задачи / Логи / Настройки. Раздел **Диалоги** — клиенты и переписка: из UI можно
-создать клиента и диалог, написать сообщение — в ответ создастся задача обработки.
+Задачи / Логи / Настройки. Раздел **Паки** — регистрация и жизненный цикл
+доменных паков; **Диалоги** — клиенты и переписка: сообщение клиента уходит в
+задачу обработки и маршрутизируется в пак через оркестратор core.
+
+## Архитектура
+
+AgentOS — платформа + паки. Frontend знает только core; доменная логика живёт
+в паках и вызывается по внутреннему контракту.
+
+```
+frontend
+   ↓
+core  (gateway, auth, conversations, tasks, registry, metering)
+   ↓ internal contract (token-gated)
+├── autoparts  → db-autoparts
+└── beauty     (stateless demo)
+```
+
+Подробнее: `docs/PLATFORM_EXTRACTION.md` (контракт, спринты 5.0–5.8.3).
 
 ## Агенты
 
@@ -448,18 +467,9 @@ docker compose up --build
 - **EmailAgent** — специалист по почте: принимает задачу от SystemAgent,
   достаёт получателя/тему/текст и отправляет письмо по SMTP (в демо — MailHog,
   UI на http://localhost:8025). Получателя можно указать в поле «Кому (email)».
-- **SearchAgent** — специалист по поиску: ищет по базе знаний компании
-  (**векторный поиск** через Ollama-эмбеддинги + fallback на ключевой матч;
-  демо-каталог запчастей). Внешние каталоги подключаются позже.
-
-```
-Задача: "Найди тормозные колодки"
-Ответ:  "По запросу «тормозные колодки» найдено записей: 1
-          • Тормозные колодки TRW GDB3410 (передние) — ..."
-
-Задача: "Отправь письмо клиенту: напомни про встречу завтра в 10:00"
-Письмо:  SystemAgent -> EmailAgent -> SMTP/MailHog -> http://localhost:8025
-```
+- **Агенты паков** — материализуются из манифеста пака при его включении
+  (например, IntakeAgent/SearchAgent/SalesAgent пака autoparts) и выполняются
+  в сервисе пака по internal contract; core хранит только реестровую проекцию.
 
 Проверьте прямо в UI: **Задачи → «Новая задача»** → введите текст → результат,
 журнал событий и письмо в MailHog. Работает даже без ключа OpenAI —
@@ -468,13 +478,16 @@ docker compose up --build
 ## Локальная разработка (без Docker)
 
 ```bash
-# Backend
-cd backend
+# Core
+cd backend/services/core
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements-dev.txt
-copy .env.example .env        # укажите DATABASE_URL (Postgres или SQLite)
-uvicorn app.main:app --reload
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8011
+
+# Pack (пример: autoparts)
+cd backend/services/autoparts
+uvicorn app.main:app --reload --port 8012
 
 # Frontend
 cd frontend
@@ -485,8 +498,10 @@ npm run dev                   # http://localhost:3000
 ## Тесты
 
 ```bash
-cd backend
-.venv\Scripts\python.exe -m pytest     # 146 тестов: агенты, оркестратор, API, память, email, поиск, эмбеддинги, auth, диалоги, intake, поставщики, цены, согласование
+cd backend/shared      && python -m pytest tests   # SDK: агенты, манифесты, workflow
+cd backend/services/core && python -m pytest tests # core: gateway, packs, context, usage, workflows
+cd backend/services/autoparts && python -m pytest tests
+cd backend/services/beauty   && python -m pytest tests
 ```
 
 ## Структура
@@ -494,24 +509,15 @@ cd backend
 ```
 agentforge/
 ├── backend/
-│   ├── app/
-│   │   ├── api/v1/        # REST API: companies, agents, tasks, logs, settings, dashboard, customers, conversations, part_requests, suppliers, quotes, approvals, actions
-│   │   ├── core/          # config, database, redis, seeding
-│   │   ├── agents/        # BaseAgent, SystemAgent, EmailAgent, SearchAgent, IntakeAgent, PricingAgent, SalesAgent, реестр
-│   │   ├── orchestrator/  # сердце платформы: маршрутизация, handoff, очередь, воркеры
-│   │   ├── tools/         # каждый инструмент — отдельный модуль (email, search, http)
-│   │   ├── suppliers/     # адаптеры поставщиков: base, mock, csv, normalize, registry
-│   │   ├── models/        # Agent, Company, Task, Memory, Customer, Conversation, PartRequest, Supplier, Quote, ApprovalRequest, AgentAction, AgentFeedback
-│   │   ├── services/      # сервисный слой (в т.ч. PartsSearchService, SupplierService, QuoteGuard, QuoteService, SalesService)
-│   │   ├── memory/        # Short / Long / Knowledge Base
-│   │   ├── llm/           # провайдеры LLM (OpenAI-совместимые)
-│   │   └── main.py
-│   ├── alembic/           # миграции
-│   └── tests/
-├── frontend/              # Next.js + TypeScript + Tailwind
-├── docker/
-├── docs/
-└── docker-compose.yml     # db, redis, mailhog, ollama, backend, frontend
+│   ├── shared/              # Pack SDK: agents, manifest, workflow, internal contract
+│   └── services/
+│       ├── core/            # платформа: auth, gateway, orchestrator, packs, usage, traces
+│       ├── autoparts/       # пак автозапчастей (своя БД, alembic, suppliers)
+│       └── beauty/          # демо-пак салона (stateless)
+├── frontend/                # Next.js + TypeScript + Tailwind (знает только core)
+├── scripts/                 # db_backup.sh / db_restore.sh
+├── docs/                    # PLATFORM_EXTRACTION.md и др.
+└── docker-compose.yml       # core, autoparts, beauty, frontend, db×2, redis, mailhog, ollama
 ```
 
 ## Стек

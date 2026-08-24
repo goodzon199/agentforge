@@ -16,7 +16,7 @@ OUT_DIR="${HERE}/backups"
 mkdir -p "${OUT_DIR}"
 WIN_OUT="$(cygpath -w "${OUT_DIR}")"
 
-DB_CONTAINER="${DB_CONTAINER:-agentos-db}"
+DB_CONTAINER="${DB_CONTAINER:-agentos-db-core}"
 PG_USER="${PG_USER:-agentos}"
 PG_DB="${PG_DB:-agentos}"
 KEEP="${1:-14}"
