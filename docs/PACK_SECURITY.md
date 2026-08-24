@@ -284,6 +284,210 @@ TTL 5 минут ограничивает остаточное окно, но о
 
 Даже «свой» `company_id` в теле запроса игнорируется в пользу токена.
 
+## 5A. Workload Delegation — спецификация этапа 5.9.3 (на утверждении)
+
+> Статус: **черновик спеки (5.9.3a), ждёт утверждения**. Имплементация (5.9.3b)
+> не начинается до согласования. Пункт «Решение» = предложение по умолчанию;
+> возражение по любому из D1–D7 достаточно для правки контракта.
+
+### 5A.1 Принцип
+
+**Service token** доказывает, *кто* такой Pack (identity, без данных).
+**Workload token** доказывает, что конкретному Pack разрешено выполнить
+конкретную работу для конкретного tenant над конкретными объектами.
+
+Workload token создаёт **только Core**, только в момент dispatch. Pack не может
+получить workload token сам: `POST /internal/token` навсегда остаётся
+service-identity endpoint и выдаёт токены без `tenant_id`, `task_id`,
+`permissions` и `scope`.
+
+```json
+{
+  "iss": "agentos-core",
+  "aud": "agentos-internal",
+  "sub": "pack:autoparts",
+
+  "pack_id": "autoparts",
+  "tenant_id": "...",
+
+  "task_id": "...",
+  "dispatch_id": "...",
+
+  "permissions": ["customer.read", "conversation.read"],
+
+  "scope": {
+    "mode": "explicit",
+    "conversation_ids": ["..."],
+    "customer_ids": ["..."]
+  },
+
+  "credential_version": 2,
+
+  "jti": "...",
+  "iat": 0,
+  "nbf": 0,
+  "exp": 0
+}
+```
+
+TTL: `min(WORKLOAD_JWT_TTL_SECONDS=300, дедлайн задачи)` — короче для
+коротких задач (D7).
+
+### 5A.2 Формула permissions (least privilege per workload)
+
+Никакого доверия данным от Pack:
+
+```
+manifest declared  ∩  tenant granted  ∩  required by this operation
+                        (= effective 5.9.2)      =  workload permissions
+```
+
+- `declared` / `granted` — уже реализовано в 5.9.2 (`effective()`).
+- **required** задаёт точка dispatch в Core: реестр операций
+  `OPERATION_PERMISSIONS` в коде Core (например `intake_dispatch →
+  {customer.read, conversation.read}`). Манифест пака **не участвует** в
+  вычислении required и не может расширить набор (D1).
+
+Даже если AutoParts в целом имеет `customer.read, conversation.read,
+supplier.search, order.create`, для Intake-dispatch токен содержит только
+`customer.read, conversation.read`. `scope_mode=tenant` (ниже) расширяет
+объекты, но никогда не permissions.
+
+### 5A.3 Object scope
+
+Одного `tenant_id` недостаточно: легальный токен tenant A не должен давать
+доступ к Conversation B той же компании.
+
+```json
+"scope": { "mode": "explicit", "conversation_ids": [...], "customer_ids": [...] }
+```
+
+- `scope_mode=explicit` (**default**) — перечисленные id; тип ресурса,
+  отсутствующий в scope, закрыт полностью (D4).
+- `scope_mode=tenant` — все объекты tenant; выбирается только решением точки
+  dispatch в Core, pack запросить его не может (D2).
+- Scope подписан JWT: модификация = signature failure.
+
+### 5A.4 PackWorkloadPrincipal и зависимости эндпоинтов
+
+Internal endpoints не разбирают JWT самостоятельно:
+
+```python
+class PackWorkloadPrincipal:
+    pack_id: str
+    tenant_id: UUID
+    task_id: UUID
+    dispatch_id: str
+    permissions: frozenset[str]
+    scope: WorkloadScope          # mode + frozenset per resource type
+    jti: str
+    credential_version: int
+
+principal = Depends(require_workload_permission("customer.read"))
+# внутри handler'а дополнительно:
+require_scope_object(principal, "conversation", conversation_id)
+```
+
+### 5A.5 Pipeline авторизации Context API
+
+```
+Bearer JWT → verify signature → issuer/audience
+→ PackIdentity active? → credential_version valid?
+→ dispatch active? (не superseded/завершён) → token expired?
+→ permission present? → grant still effective in DB? (current-grant recheck)
+→ tenant matches resource? → object in token scope?
+→ ALLOW
+```
+
+Коды ответа:
+
+| Ситуация | HTTP | reason в аудите |
+|---|---|---|
+| подпись/формат/exp/nbf | 401 | `token_invalid` |
+| identity нет/disabled | 401 | `identity_disabled` |
+| credential_version mismatch | 401 | `credential_version_mismatch` |
+| jti в denylist / dispatch завершён | 401 | `token_revoked` |
+| permission нет в claims | 403 | `permission_missing` |
+| грант отозван в БД после выпуска | 403 | `grant_revoked` |
+| объект другого tenant | **404** | `wrong_tenant` |
+| свой tenant, но вне explicit scope | 403 | `object_out_of_scope` |
+
+`404` для cross-tenant — API не должен работать oracle'ом существования
+чужих данных (D3). Вне-scope объект своего tenant — `403`: существование в
+своём tenant скрытием не считается. Реальный reason всегда в аудите,
+независимо от возвращаемого кода.
+
+**Current-grant recheck**: sensitive Context API при каждом запросе
+перечитывает `effective(pack, tenant)` из БД — JWT это capability, но Core
+способен отозвать право мгновенно (revoke customer.read во время выполнения
+задачи останавливает доступ до истечения TTL).
+
+### 5A.6 Dispatch contract Core → Pack
+
+В payload dispatch добавляется capability-токен; транспортный Bearer
+(`aud=pack:<name>`, 5.9.1) продолжает доказывать «отправитель — Core»:
+
+```json
+{ "task": {...}, "context": {...}, "workload_token": "eyJ..." }
+```
+
+Pack использует `workload_token` как Bearer при вызовах `/internal/context/*`.
+С 5.9.3 Context API принимает **только** workload principal — без переходного
+периода, обе стороны деплоятся вместе; service JWT остаётся на health /
+handshake / `/internal/token` до этапа 5.9.4 (D5).
+
+### 5A.7 Делегирование нельзя расширить
+
+Дочерняя операция (tool/action/подdispatch) получает максимум права исходного
+workload: `child permissions ⊆ parent permissions`, scope ⊆ parent scope.
+Обратное невозможно by construction: новый workload token выдаёт только Core
+при новом dispatch, а точки выдачи требуют явной операции из реестра.
+Заложено для будущих agent→tool→pack цепочек.
+
+### 5A.8 Replay-политика
+
+Повтор задачи = новый dispatch: Core создаёт новые `task_id`(опц.),
+`dispatch_id`, `jti`, workload token и проставляет связь
+`replayed_from_task_id` в задаче. Старый workload JWT после завершения/
+замены dispatch отклоняется проверкой «dispatch active?» (5A.5) даже до
+истечения exp. Внутри живого dispatch jti переиспользуем (несколько context-
+вызовов одной задачи); мгновенный kill-switch — Redis denylist
+`workload:jti:{jti}` с TTL до exp (D6).
+
+### 5A.9 Audit
+
+Каждый отказ — `pack.workload.denied` c `pack_id, tenant_id, task_id,
+dispatch_id, permission, resource_type, resource_id, jti, reason`
+(reason из таблицы 5A.5). Каждый выпуск — `pack.workload.dispatched`
+(dispatch_id, task_id, permissions, scope_mode). Отказы не возвращают
+детали в ответе API — только коды выше.
+
+### 5A.10 Миграция паков
+
+AutoParts, Beauty, HelloPack: берут `workload_token` из payload dispatch и
+передают его в вызовы Context API вместо service JWT. SDK/shared получает
+хелпер `workload_bearer(payload)`. Обратная совместимость Context API со
+service JWT **не предусматривается** (D5).
+
+### 5A.11 Adversarial-матрица 5.9.3 (обязательные тесты)
+
+| # | Провокация | Ожидание |
+|---|---|---|
+| W1 | Pack сам подставляет tenant B при получении токена | невозможно: `/internal/token` не выдаёт workload tokens |
+| W2 | tenant A token → customer компании B | denied |
+| W3 | token Conversation A → Conversation B того же tenant | denied |
+| W4 | операция требует `customer.read`, его нет в claims | denied |
+| W5 | permission была в JWT, но грант revoked | denied immediately (recheck БД) |
+| W6 | credential_version изменён ротацией | denied |
+| W7 | pack disabled | denied |
+| W8 | expired JWT | denied |
+| W9 | модификация scope | signature failure |
+| W10 | replay старого JWT после нового dispatch | denied |
+| W11 | valid token + собственный scoped объект | allowed |
+
+Regression: webchat → Core → AutoParts Intake → Context API → clarification →
+Core Conversation продолжает работать end-to-end.
+
 ---
 
 ## 7. Совместимость и план перехода
@@ -320,7 +524,8 @@ TTL 5 минут ограничивает остаточное окно, но о
 | 5.9.0 | этот документ: threat model + security contract (утверждён с поправками) | [x] |
 | 5.9.1 | PackIdentity: модель, миграция, генерация секретов, one-time reveal, hash storage, rotation, revocation, credential_version, `POST /internal/token` → service JWT, per-pack dispatch credential, compose secrets | [x] |
 | 5.9.2 | declared/granted permissions: миграция bootstrap для builtin-паков, admin API, effective-формула | [x] |
-| 5.9.3 | workload/tenant delegation: workload-токены при dispatch, Context API по ним, object-scope | [ ] |
+| 5.9.3a | workload delegation: спецификация (раздел 5A) — **на утверждении** | [ ] |
+| 5.9.3b | workload/tenant delegation по разделу 5A: WorkloadTokenService, principal, Context API migration, current-grant recheck, audit, миграция паков | [ ] |
 | 5.9.4 | enforcement всех `/internal/*`: только JWT, legacy off, коды ошибок | [ ] |
 | 5.9.5 | audit/revocation: `pack.auth.legacy_used`, события грантов, UI отзывов | [ ] |
 | 5.9.6 | EvilPack adversarial suite: автотесты A1–A10 | [ ] |
