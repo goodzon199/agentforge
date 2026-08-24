@@ -15,6 +15,11 @@ import jwt
 
 DEFAULT_SECRETS_DIR = "/run/secrets/pack-credentials"
 
+# Invariant I1 (sprint 5.9.3): core-signed tokens carry an explicit type.
+TOKEN_TYPE_SERVICE = "service"
+TOKEN_TYPE_WORKLOAD = "workload"
+TOKEN_TYPE_DISPATCH = "dispatch"
+
 
 def slugify(name: str) -> str:
     return "".join(ch for ch in name.lower() if ch.isalnum()) or "pack"
@@ -42,14 +47,24 @@ def bearer_from_headers(headers: Any) -> str | None:
 def verify_core_dispatch_token(
     token: str, *, expected_pack: str, key: str
 ) -> dict[str, Any]:
-    """Verify a core→pack dispatch token; raises jwt.PyJWTError on failure."""
-    return jwt.decode(
+    """Verify a core→pack dispatch token; raises jwt.PyJWTError on failure.
+
+    Enforces ``token_type=dispatch`` so a service or workload token can never
+    authenticate a core→pack call even when signatures would verify.
+    """
+    claims = jwt.decode(
         token,
         key,
         algorithms=["HS256"],
         issuer="agentos-core",
         audience=f"pack:{expected_pack}",
     )
+    if claims.get("token_type") != TOKEN_TYPE_DISPATCH:
+        raise jwt.InvalidTokenError(
+            f"token_type must be {TOKEN_TYPE_DISPATCH!r}, got "
+            f"{claims.get('token_type')!r}."
+        )
+    return claims
 
 
 def legacy_internal_token_allowed() -> bool:
@@ -63,3 +78,32 @@ def legacy_internal_token_allowed() -> bool:
         "true",
         "yes",
     }
+
+
+# --- Workload token pass-through (sprint 5.9.3) ---------------------------------
+
+import contextvars
+
+_workload_token_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "pack_workload_token", default=None
+)
+
+
+def bind_workload_token(token: str | None) -> None:
+    """Remember the dispatch's workload token for this request/worker run."""
+    _workload_token_var.set(token or None)
+
+
+def current_workload_token() -> str | None:
+    return _workload_token_var.get()
+
+
+def workload_bearer(payload: dict[str, Any] | None = None) -> dict[str, str]:
+    """Authorization headers for pack→core Context API calls.
+
+    Prefers the explicit payload's ``workload_token``; falls back to the
+    token bound via :func:`bind_workload_token`. Returns {} when absent —
+    callers then simply skip core pulls instead of failing hard.
+    """
+    token = (payload or {}).get("workload_token") or _workload_token_var.get()
+    return {"Authorization": f"Bearer {token}"} if token else {}

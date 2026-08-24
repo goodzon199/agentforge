@@ -84,59 +84,149 @@ def test_build_pack_context_empty_without_ids(db_session):
     assert context == {}
 
 
-def test_context_api_requires_pack_header(db_session, client):
-    _, _, conversation, _ = _make_conversation(db_session)
-    headers = {"X-Internal-Token": settings.internal_api_token}
+def _seed_workload_fixtures(
+    db,
+    monkeypatch=None,
+    *,
+    pack_name="readerpack",
+    permissions=("conversation.read", "customer.read"),
+):
+    """Pack + identity + grants + a scoped conversation, ready for tokens."""
+    from app.core.workload import OPERATION_PERMISSIONS
+    from app.models import Company
+    from app.services.pack_identity_service import PackIdentityService
+    from app.services.pack_permission_service import PackPermissionService
 
-    response = client.get(
-        f"/internal/context/conversations/{conversation.id}", headers=headers
+    if monkeypatch is not None:
+        monkeypatch.setitem(
+            OPERATION_PERMISSIONS,
+            f"dispatch.{pack_name}.intake",
+            frozenset(permissions),
+        )
+    company = db.scalars(select(Company)).first()
+    customer = Customer(
+        company_id=company.id,
+        name="Тест Клиент",
+        phone="+7 900 000-00-00",
+        email="client@example.com",
     )
+    db.add(customer)
+    db.flush()
+    conversation = Conversation(company_id=company.id, customer_id=customer.id)
+    db.add(conversation)
+    db.flush()
+    message = ConversationMessage(
+        conversation_id=conversation.id,
+        content="Нужны тормозные колодки на BMW X5",
+        sender_type="customer",
+    )
+    db.add(message)
 
-    assert response.status_code == 403
-
-
-def test_context_api_forbids_missing_permission(db_session, client):
-    _, _, conversation, _ = _make_conversation(db_session)
-    db_session.add(
+    db.add(
         Pack(
-            name="nopack",
+            name=pack_name,
             version="1.0.0",
             base_url="http://localhost:9",
-            permissions=["conversation.write"],
+            permissions=list(permissions),
             state="active",
             is_active=True,
+            agents=[{"type": "intake"}],
         )
     )
-    db_session.flush()
-    headers = {
+    db.flush()
+    PackIdentityService(db).ensure(pack_name)
+    svc = PackPermissionService(db)
+    svc.sync_declared(pack_name, list(permissions), "1.0.0")
+    for perm in permissions:
+        svc.grant(pack_name, perm, actor_id=None)
+    db.commit()
+    return company, customer, conversation, message
+
+
+def _workload_headers(
+    db,
+    *,
+    pack_name="readerpack",
+    company,
+    conversation,
+    customer,
+    message,
+    operation=None,
+    extra_permissions=(),
+    scope=None,
+):
+    from app.core.workload import WorkloadScope
+    from app.services.workload_token_service import WorkloadTokenService
+
+    operation = operation or f"dispatch.{pack_name}.intake"
+    if scope is None:
+        scope = WorkloadScope(
+            conversation_ids=frozenset({str(conversation.id)}),
+            customer_ids=frozenset({str(customer.id)}),
+            message_ids=frozenset({str(message.id)}),
+        )
+    svc = WorkloadTokenService(db)
+    token, claims = svc.issue(
+        pack_id=pack_name,
+        tenant_id=str(company.id),
+        task_id=str(uuid.uuid4()),
+        dispatch_id=str(uuid.uuid4()),
+        operation=operation,
+        scope=scope,
+    )
+    svc.record_dispatch(
+        dispatch_id=claims["dispatch_id"],
+        pack_id=pack_name,
+        operation=operation,
+        jti=claims["jti"],
+        company_id=str(company.id),
+    )
+    db.commit()
+    return {
         "X-Internal-Token": settings.internal_api_token,
-        "X-Pack-Name": "nopack",
+        "Authorization": f"Bearer {token}",
     }
+
+
+def test_context_api_requires_workload_bearer(db_session, client, monkeypatch):
+    _, _, conversation, _, = _seed_workload_fixtures(db_session, monkeypatch)
+    response = client.get(
+        f"/internal/context/conversations/{conversation.id}",
+        headers={"X-Internal-Token": settings.internal_api_token},
+    )
+    assert response.status_code == 401
+
+
+def test_context_api_rejects_service_jwt_on_context(db_session, client, monkeypatch):
+    """Invariant I1: a service token never opens Context API."""
+    from app.models import Pack as PackModel
+    from app.services.pack_identity_service import PackIdentityService
+
+    company, customer, conversation, message = _seed_workload_fixtures(db_session, monkeypatch)
+    identity = PackIdentityService(db_session).get("readerpack")
+    token, _ = PackIdentityService(db_session).issue_service_token(identity)
+    db_session.commit()
+    assert PackModel is not None
 
     response = client.get(
-        f"/internal/context/conversations/{conversation.id}", headers=headers
+        f"/internal/context/conversations/{conversation.id}",
+        headers={
+            "X-Internal-Token": settings.internal_api_token,
+            "Authorization": f"Bearer {token}",
+        },
     )
+    assert response.status_code == 401
 
-    assert response.status_code == 403
 
-
-def test_context_api_returns_conversation_with_permission(db_session, client):
-    _, customer, conversation, message = _make_conversation(db_session)
-    db_session.add(
-        Pack(
-            name="readerpack",
-            version="1.0.0",
-            base_url="http://localhost:9",
-            permissions=["conversation.read"],
-            state="active",
-            is_active=True,
-        )
+def test_context_api_returns_conversation_with_permission(db_session, client, monkeypatch):
+    _, customer, conversation, message = _seed_workload_fixtures(db_session, monkeypatch)
+    headers = _workload_headers(
+        db_session,
+        company=_first_company(db_session),
+        conversation=conversation,
+        customer=customer,
+        message=message,
     )
-    db_session.flush()
-    headers = {
-        "X-Internal-Token": settings.internal_api_token,
-        "X-Pack-Name": "readerpack",
-    }
 
     response = client.get(
         f"/internal/context/conversations/{conversation.id}", headers=headers
@@ -149,23 +239,21 @@ def test_context_api_returns_conversation_with_permission(db_session, client):
     assert payload["messages"][0]["content"] == message.content
 
 
-def test_context_api_customer_profile_gate(db_session, client):
-    _, customer, _, _ = _make_conversation(db_session)
-    db_session.add(
-        Pack(
-            name="custpack",
-            version="1.0.0",
-            base_url="http://localhost:9",
-            permissions=["customer.read"],
-            state="active",
-            is_active=True,
-        )
+def _first_company(db):
+    from app.models import Company
+
+    return db.scalars(select(Company)).first()
+
+
+def test_context_api_customer_profile_gate(db_session, client, monkeypatch):
+    _, customer, conversation, message = _seed_workload_fixtures(db_session, monkeypatch)
+    headers = _workload_headers(
+        db_session,
+        company=_first_company(db_session),
+        conversation=conversation,
+        customer=customer,
+        message=message,
     )
-    db_session.flush()
-    headers = {
-        "X-Internal-Token": settings.internal_api_token,
-        "X-Pack-Name": "custpack",
-    }
 
     ok = client.get(f"/internal/context/customers/{customer.id}", headers=headers)
     denied = client.get(
@@ -175,27 +263,26 @@ def test_context_api_customer_profile_gate(db_session, client):
 
     assert ok.status_code == 200
     assert ok.json()["name"] == "Тест Клиент"
-    assert denied.status_code == 403
+    assert denied.status_code == 401
 
 
-def test_context_api_customer_forbidden_without_customer_read(db_session, client):
-    """A pack with other permissions but no ``customer.read`` gets 403."""
-    _, customer, _, _ = _make_conversation(db_session)
-    db_session.add(
-        Pack(
-            name="noreadpack",
-            version="1.0.0",
-            base_url="http://localhost:9",
-            permissions=["conversation.read", "supplier.search"],
-            state="active",
-            is_active=True,
-        )
+def test_context_api_forbidden_without_customer_read_claim(db_session, client, monkeypatch):
+    """conversation.read-only token cannot pull customer profiles (W4)."""
+    _, customer, conversation, message = _seed_workload_fixtures(
+        db_session,
+        monkeypatch,
+        pack_name="convonly",
+        permissions=["conversation.read"],
     )
-    db_session.flush()
-    headers = {
-        "X-Internal-Token": settings.internal_api_token,
-        "X-Pack-Name": "noreadpack",
-    }
+    # Re-issue with only the conversation in scope (customer.read absent).
+    headers = _workload_headers(
+        db_session,
+        pack_name="convonly",
+        company=_first_company(db_session),
+        conversation=conversation,
+        customer=customer,
+        message=message,
+    )
 
     response = client.get(
         f"/internal/context/customers/{customer.id}", headers=headers

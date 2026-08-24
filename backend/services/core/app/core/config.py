@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     internal_jwt_ttl_seconds: int = 300
     pack_secrets_dir: str = "/run/secrets/pack-credentials"
 
+    # Sprint 5.9.3 workload tokens: capability JWTs minted only at dispatch.
+    # exp never exceeds the task deadline (I4); verification allows small
+    # clock skew (I4).
+    workload_jwt_ttl_seconds: int = 300
+    workload_clock_skew_seconds: int = 10
+
     # Database
     database_url: str = "postgresql+psycopg://agentos:agentos_secret@localhost:5432/agentos"
 

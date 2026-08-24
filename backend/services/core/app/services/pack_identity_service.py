@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.security import hash_password, verify_password
+from app.core.workload import TOKEN_TYPE_DISPATCH, TOKEN_TYPE_SERVICE
 from app.models import PackIdentity, PackIdentityStatus
 
 
@@ -146,6 +147,7 @@ class PackIdentityService:
             "iss": "agentos-core",
             "sub": f"pack:{identity.pack_id}",
             "aud": "agentos-internal",
+            "token_type": TOKEN_TYPE_SERVICE,
             "pack_id": identity.pack_id,
             "jti": uuid.uuid4().hex,
             "iat": now,
@@ -176,6 +178,7 @@ class PackIdentityService:
             "iss": "agentos-core",
             "sub": f"pack:{pack_id}",
             "aud": f"pack:{pack_id}",
+            "token_type": TOKEN_TYPE_DISPATCH,
             "pack_id": pack_id,
             "jti": uuid.uuid4().hex,
             "iat": now,

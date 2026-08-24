@@ -168,6 +168,9 @@ class PackPermissionService:
                         detail={"permission": perm, "reason": "restored_after_redeclare",
                                 "manifest_version": manifest_version})
 
+        # Sessions run with autoflush=False; make the projection visible to
+        # subsequent queries (grant() re-reads declared) in the same unit.
+        self.db.flush()
         return {
             "added": sorted(added),
             "removed": sorted(removed),

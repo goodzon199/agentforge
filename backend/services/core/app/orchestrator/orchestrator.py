@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.registry import agent_registry
 from app.core.config import settings
+from app.core.database import SessionLocal
 from app.core.emergency import emergency_switch
 from app.core.redis import redis_client
 from app.llm.client import LLMClient, TaskLLMProxy, llm_client
@@ -26,6 +27,24 @@ logger = logging.getLogger(__name__)
 
 # Name of the platform's built-in dispatcher agent.
 SYSTEM_AGENT_SLUG = "system-agent"
+
+
+def _froze(value: Any) -> frozenset[str]:
+    return frozenset({str(value)}) if value else frozenset()
+
+
+def _deadline_from(input_data: dict | None):
+    """Optional task deadline (I4): ISO string in input_data, else None."""
+    raw = (input_data or {}).get("workload_deadline")
+    if not raw:
+        return None
+    from datetime import datetime
+
+    try:
+        parsed = datetime.fromisoformat(str(raw))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    except ValueError:
+        return None
 
 
 class Orchestrator:
@@ -263,6 +282,10 @@ class Orchestrator:
             # Attribute the task to the agent that actually executed it.
             task.agent_id = final_agent.id
 
+            # Sprint 5.9.3: terminal dispatch state invalidates outstanding
+            # workload tokens for this task (active-dispatch binding).
+            self._close_dispatches(task.id, failed=False)
+
             # Chat pipeline tail (sprint 5.8.3): the pack replied over the
             # contract; core owns conversations, so the reply is persisted
             # here — the pack never writes into core storage.
@@ -330,6 +353,7 @@ class Orchestrator:
             task.status = TaskStatus.failed
             task.error = str(exc)
             task.completed_at = _now()
+            self._close_dispatches(task.id, failed=True)
             self._add_event(
                 db,
                 task,
@@ -448,25 +472,76 @@ class Orchestrator:
         Sprint 5.8.3 Pack Context Contract: core ships the conversation
         context with the dispatch so the pack never reads core-owned storage.
         ``message_id`` travels in the payload — the pack deduplicates on it.
+
+        Sprint 5.9.3 workload delegation: every dispatch carries a capability
+        token minted here (permissions = declared ∩ granted ∩ required by the
+        operation, fail-closed per I2) bound to an active PackDispatch row.
         """
         from shared.internal import internal_post
 
         from app.core.config import settings
+        from app.core.workload import WorkloadScope, operation_key
         from app.services.pack_identity_service import PackIdentityService
+        from app.services.workload_token_service import (
+            WorkloadTokenError,
+            WorkloadTokenService,
+        )
         from app.tracing.tracer import trace
 
         pack_name, pack_base_url = self._resolve_pack_for(db, agent_type)
         dispatch_id = str(uuid.uuid4())
         extra_headers: dict[str, str] | None = None
         if pack_name:
-            token = PackIdentityService(db).issue_dispatch_token(
+            transport_token = PackIdentityService(db).issue_dispatch_token(
                 pack_name,
                 tenant_id=str(task.company_id) if task.company_id else None,
                 task_id=str(task.id),
                 dispatch_id=dispatch_id,
             )
-            if token:
-                extra_headers = {"Authorization": f"Bearer {token}"}
+            if transport_token:
+                extra_headers = {"Authorization": f"Bearer {transport_token}"}
+
+        workload_token: str | None = None
+        context_payload = self._build_pack_context(db, task)
+        if pack_name:
+            operation = operation_key(pack_name, agent_type)
+            scope = WorkloadScope(
+                conversation_ids=_froze(context_payload.get("conversation", {}).get("id")),
+                customer_ids=_froze(context_payload.get("actor", {}).get("customer_id")),
+                message_ids=_froze(context_payload.get("message", {}).get("id")),
+            )
+            try:
+                # Isolated session: the binding must be visible to core's own
+                # verification before the HTTP call leaves this process.
+                with SessionLocal() as bind_db:
+                    binder = WorkloadTokenService(bind_db)
+                    workload_token, claims = binder.issue(
+                        pack_id=pack_name,
+                        tenant_id=str(task.company_id) if task.company_id else None,
+                        task_id=str(task.id),
+                        dispatch_id=dispatch_id,
+                        operation=operation,
+                        scope=scope,
+                        task_deadline=_deadline_from(task.input_data),
+                    )
+                    binder.record_dispatch(
+                        dispatch_id=dispatch_id,
+                        pack_id=pack_name,
+                        operation=operation,
+                        jti=claims["jti"],
+                        task_id=str(task.id),
+                        company_id=str(task.company_id) if task.company_id else None,
+                    )
+                    binder.audited_dispatch(claims)
+                    bind_db.commit()
+            except WorkloadTokenError as exc:
+                logger.warning(
+                    "workload token refused for task %s (%s): %s",
+                    task.id,
+                    operation,
+                    exc,
+                )
+                raise
 
         try:
             result = internal_post(
@@ -479,7 +554,8 @@ class Orchestrator:
                     "task_id": str(task.id),
                     "company_id": str(task.company_id) if task.company_id else None,
                     "dispatch_id": dispatch_id,
-                    "context": self._build_pack_context(db, task),
+                    "context": context_payload,
+                    "workload_token": workload_token,
                 },
                 timeout=settings.llm_read_timeout + 10.0,
                 extra_headers=extra_headers,
@@ -639,6 +715,19 @@ class Orchestrator:
                 "pack context build failed for task %s: %s", task.id, exc
             )
             return {}
+
+    def _close_dispatches(self, task_id: uuid.UUID, *, failed: bool) -> None:
+        """Best-effort: flip this task's active dispatch rows to terminal."""
+        try:
+            from app.services.workload_token_service import WorkloadTokenService
+
+            with SessionLocal() as bind_db:
+                WorkloadTokenService(bind_db).mark_task_dispatches_terminal(
+                    str(task_id), failed=failed
+                )
+                bind_db.commit()
+        except Exception:  # pragma: no cover - never break the pipeline
+            logger.warning("failed to close dispatches for task %s", task_id)
 
     def _add_event(
         self,

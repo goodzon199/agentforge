@@ -39,6 +39,9 @@ class AgentExecuteRequest(BaseModel):
     # Sprint 5.8.3 Pack Context Contract: same dispatch shape as autoparts.
     dispatch_id: str | None = None
     context: dict[str, Any] = {}
+    # Sprint 5.9.3 workload delegation: core-minted capability token bound to
+    # this dispatch; used as bearer for pack→core Context API calls.
+    workload_token: str | None = None
 
 
 @router.get("/health")
@@ -121,8 +124,10 @@ def pack_workflows() -> dict[str, Any]:
 def agent_execute(request: Request, payload: AgentExecuteRequest) -> dict[str, Any]:
     """Run a Beauty agent over the internal contract (sprint 5.4/5.5)."""
     from shared.internal import require_core_dispatch
+    from shared.pack_security import bind_workload_token
 
     require_core_dispatch(request, pack_name="beauty")
+    bind_workload_token(payload.workload_token)
     try:
         agent_cls = get_class(payload.agent_type)
     except KeyError as exc:

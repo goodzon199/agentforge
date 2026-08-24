@@ -12,6 +12,7 @@ from app.models.dead_task import DeadTask
 from app.models.llm_usage import LLMUsage
 from app.models.memory import KnowledgeEntry, LongMemory, MemoryEntry, ShortMemory
 from app.models.pack import Pack
+from app.models.pack_dispatch import PackDispatch, PackDispatchStatus
 from app.models.pack_identity import PackIdentity, PackIdentityStatus
 from app.models.pack_permission import (
     PackDeclaredPermission,
@@ -43,6 +44,8 @@ __all__ = [
     "MemoryEntry",
     "Pack",
     "PackDeclaredPermission",
+    "PackDispatch",
+    "PackDispatchStatus",
     "PackGrantSource",
     "PackGrantStatus",
     "PackIdentity",

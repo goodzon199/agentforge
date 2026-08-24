@@ -3,13 +3,22 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from shared.internal import require_internal_token
+from shared.pack_security import bearer_from_headers
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models import Agent, Company, Conversation, ConversationMessage, Customer, Pack
+from app.core.workload import (
+    PackWorkloadPrincipal,
+    WorkloadDenyReason,
+)
+from app.models import Agent, Company, Conversation, ConversationMessage, Customer
+from app.services.workload_token_service import (
+    WorkloadTokenService,
+    WorkloadVerificationError,
+)
 
 router = APIRouter(
     prefix="/internal",
@@ -58,35 +67,56 @@ def _get_or_404(db: Session, model, entity_id: str):
     return record
 
 
-def _require_pack_permission(
-    db: Session,
-    pack_name: str | None,
-    permission: str,
-) -> Pack:
-    """Pack Security gate for pull-based context reads (sprint 5.8.3).
+# --- Workload principal (sprint 5.9.3) ----------------------------------------
+#
+# Context API accepts ONLY workload tokens (invariant I1): a service JWT or
+# a dispatch token is a token-confusion attempt and gets 401.
 
-    A pack may fetch core-owned context only when its manifest declares the
-    matching permission (``conversation.read`` / ``customer.read``). The
-    shared internal token authenticates the call; ``X-Pack-Name`` identifies
-    the caller until per-pack credentials land in sprint 5.9.
+_STATUS_BY_REASON = {
+    # authentication problems → 401
+    "token_invalid": 401,
+    "identity_missing": 401,
+    "identity_disabled": 401,
+    "credential_version_mismatch": 401,
+    "token_revoked": 401,
+    # authenticated but not authorized → 403
+    "permission_missing": 403,
+    "grant_revoked": 403,
+}
+
+
+def require_workload_permission(permission: str):
+    """Dependency factory: verified workload principal with ``permission``.
+
+    Implements pipeline 5A.5 up to the permission check; tenant/object
+    checks stay with the handler (they know the resource).
     """
-    if not pack_name:
-        raise HTTPException(
-            status_code=403,
-            detail="Заголовок X-Pack-Name обязателен для Context API.",
-        )
-    pack = db.scalars(select(Pack).where(Pack.name == pack_name)).first()
-    if pack is None or not pack.is_active:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Пак {pack_name!r} не зарегистрирован или не активен.",
-        )
-    if permission not in (pack.permissions or []):
-        raise HTTPException(
-            status_code=403,
-            detail=f"У пака {pack_name!r} нет разрешения {permission}.",
-        )
-    return pack
+
+    def dependency(
+        request: Request,
+        db: Session = Depends(get_db),
+    ) -> PackWorkloadPrincipal:
+        svc = WorkloadTokenService(db)
+        token = bearer_from_headers(request.headers)
+        try:
+            if not token:
+                raise WorkloadVerificationError(
+                    WorkloadDenyReason.token_invalid,
+                    "Требуется Bearer workload token.",
+                )
+            principal = svc.verify(token)
+            svc.recheck_grant(principal, permission)
+            return principal
+        except WorkloadVerificationError as exc:
+            status = _STATUS_BY_REASON.get(exc.reason.value, 401)
+            svc.deny(None, exc.reason, permission=permission, extra=exc.detail)
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+    return dependency
+
+
+_require_conversation_read = require_workload_permission("conversation.read")
+_require_customer_read = require_workload_permission("customer.read")
 
 
 @router.get("/company/{company_id}")
@@ -120,17 +150,25 @@ def agent_identity(agent_id: str, db: Session = Depends(get_db)) -> dict[str, An
 def context_conversation(
     conversation_id: str,
     db: Session = Depends(get_db),
-    x_pack_name: str | None = Header(default=None),
+    principal: PackWorkloadPrincipal = Depends(_require_conversation_read),
     limit: int = 20,
 ) -> dict[str, Any]:
-    """Pull-based conversation context for packs (sprint 5.8.3).
+    """Pull-based conversation context for packs.
 
-    Requires the calling pack to declare ``conversation.read``. Returns the
-    conversation, its recent messages and a customer summary — the same shape
-    core ships proactively in the dispatch payload's ``history``.
+    Sprint 5.9.3: workload-only. The token's tenant must match the
+    conversation's company (else 404 — no existence oracle) and the object
+    must be inside the explicit scope (else 403). The embedded customer
+    summary is included only when the principal also holds ``customer.read``
+    with that customer in scope.
     """
-    _require_pack_permission(db, x_pack_name, "conversation.read")
+    svc = WorkloadTokenService(db)
     conversation = _get_or_404(db, Conversation, conversation_id)
+    svc.authorize_object(
+        principal,
+        "conversation",
+        str(conversation.id),
+        resource_tenant_id=str(conversation.company_id),
+    )
     limit = max(1, min(limit, 100))
     messages = db.scalars(
         select(ConversationMessage)
@@ -143,6 +181,18 @@ def context_conversation(
         if conversation.customer_id
         else None
     )
+    customer_block: dict[str, Any] | None = None
+    if (
+        customer is not None
+        and "customer.read" in principal.permissions
+        and principal.scope.allows("customer", str(customer.id))
+    ):
+        customer_block = {
+            "id": str(customer.id),
+            "name": customer.name,
+            "email": customer.email or "",
+            "phone": customer.phone or "",
+        }
     return {
         "conversation": {
             "id": str(conversation.id),
@@ -154,16 +204,7 @@ def context_conversation(
                 else conversation.mode
             ),
         },
-        "customer": (
-            {
-                "id": str(customer.id),
-                "name": customer.name,
-                "email": customer.email or "",
-                "phone": customer.phone or "",
-            }
-            if customer is not None
-            else None
-        ),
+        "customer": customer_block,
         "messages": [
             {
                 "id": str(m.id),
@@ -180,16 +221,21 @@ def context_conversation(
 def context_customer(
     customer_id: str,
     db: Session = Depends(get_db),
-    x_pack_name: str | None = Header(default=None),
+    principal: PackWorkloadPrincipal = Depends(_require_customer_read),
 ) -> dict[str, Any]:
-    """Pull-based customer profile for packs (sprint 5.8.3).
-
-    Requires the calling pack to declare ``customer.read``.
-    """
-    _require_pack_permission(db, x_pack_name, "customer.read")
+    """Pull-based customer profile for packs (workload-only since 5.9.3)."""
+    svc = WorkloadTokenService(db)
     customer = _get_or_404(db, Customer, customer_id)
+    svc.authorize_object(
+        principal,
+        "customer",
+        str(customer.id),
+        resource_tenant_id=str(customer.company_id),
+    )
     conversation_ids = db.scalars(
-        select(Conversation.id).where(Conversation.customer_id == customer.id)
+        select(Conversation.id)
+        .where(Conversation.customer_id == customer.id)
+        .where(Conversation.company_id == customer.company_id)
     ).all()
     return {
         "id": str(customer.id),

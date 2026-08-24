@@ -64,6 +64,10 @@ class AgentExecuteRequest(BaseModel):
     # never reads core storage; ``message.id`` keys idempotency.
     dispatch_id: str | None = None
     context: dict[str, Any] = {}
+    # Sprint 5.9.3 workload delegation: capability token minted by core for
+    # THIS dispatch (tenant+task scoped, explicit object scope). Used as the
+    # bearer for any pack→core Context API call during this run.
+    workload_token: str | None = None
 
 
 def _get_or_404(db: Session, model, entity_id: str):
@@ -89,8 +93,10 @@ def agent_execute(
     input_data and the domain side executes it with its own registry.
     """
     from shared.internal import require_core_dispatch
+    from shared.pack_security import bind_workload_token
 
     require_core_dispatch(request, pack_name="autoparts")
+    bind_workload_token(payload.workload_token)
     from app.agents.registry import agent_registry
     from app.orchestrator.orchestrator import orchestrator
 
