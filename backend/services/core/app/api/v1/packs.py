@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_current_user
 from app.core.database import get_db
 from app.models import User
+from app.services.audit_service import AuditService
+from app.services.pack_identity_service import PackIdentityError, PackIdentityService
 from app.services.pack_service import PackError, PackService
 
 router = APIRouter(prefix="/packs", tags=["packs"])
@@ -163,3 +165,71 @@ def healthcheck_pack(
         return _service(db).healthcheck(name)
     except PackError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# --- Pack identity (sprint 5.9.1) -------------------------------------------
+
+
+def _identity_service(db: Session):
+    return PackIdentityService(db), AuditService(db)
+
+
+def _identity_dict(identity) -> dict[str, Any]:
+    return {
+        "pack_id": identity.pack_id,
+        "service_id": identity.service_id,
+        "status": identity.status.value,
+        "credential_version": identity.credential_version,
+        "created_at": identity.created_at.isoformat() if identity.created_at else None,
+        "rotated_at": identity.rotated_at.isoformat() if identity.rotated_at else None,
+        "revoked_at": identity.revoked_at.isoformat() if identity.revoked_at else None,
+        "last_authenticated_at": (
+            identity.last_authenticated_at.isoformat()
+            if identity.last_authenticated_at
+            else None
+        ),
+    }
+
+
+@router.get("/{name}/identity")
+def get_pack_identity(
+    name: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Identity metadata only — never secrets (hashes stay server-side)."""
+    svc, _ = _identity_service(db)
+    identity = svc.get(name)
+    if identity is None:
+        raise HTTPException(status_code=404, detail=f"У пака {name!r} нет identity.")
+    return _identity_dict(identity)
+
+
+@router.post("/{name}/identity/provision")
+@router.post("/{name}/identity/rotate")
+def provision_pack_identity(
+    name: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Issue or rotate both secrets. Plaintext shown exactly once.
+
+    The pack must re-read the mounted secret files and restart; the version
+    bump invalidates every previously issued token immediately.
+    """
+    _require_manager(user)
+    svc, audit = _identity_service(db)
+    try:
+        result = svc.provision(name)
+    except PackIdentityError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    action = "identity.rotate" if svc.get(name).rotated_at is not None else "identity.provisioned"
+    audit.record(
+        action=action,
+        entity_type="pack_identity",
+        entity_id=name,
+        actor_type="user",
+        detail={"credential_version": result["credential_version"]},
+    )
+    db.commit()
+    return result

@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.internal import router as internal_router
+from app.api.internal import token_router
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.database import Base, SessionLocal, engine
@@ -159,6 +160,9 @@ app.include_router(api_router, prefix=settings.api_v1_prefix)
 
 # Internal contract (sprint 5.0): token-gated endpoints autoparts calls.
 app.include_router(internal_router)
+# Sprint 5.9.1: pack identity token issuance (bootstrap-secret gated,
+# deliberately outside the legacy shared-token dependency).
+app.include_router(token_router)
 
 
 @app.get("/health", tags=["meta"])

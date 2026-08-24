@@ -25,11 +25,21 @@ def internal_headers() -> dict[str, str]:
     return {"X-Internal-Token": internal_token()}
 
 
-def internal_post(base_url: str, path: str, *, payload: dict[str, Any] | None = None, timeout: float = 30.0) -> dict[str, Any]:
+def internal_post(
+    base_url: str,
+    path: str,
+    *,
+    payload: dict[str, Any] | None = None,
+    timeout: float = 30.0,
+    extra_headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    headers = internal_headers()
+    if extra_headers:
+        headers.update(extra_headers)
     resp = httpx.post(
         f"{base_url.rstrip('/')}{path}",
         json=payload or {},
-        headers=internal_headers(),
+        headers=headers,
         timeout=timeout,
     )
     resp.raise_for_status()
@@ -70,3 +80,44 @@ def require_internal_token(request: Request) -> None:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Неверный внутренний токен.",
         )
+
+
+def require_core_dispatch(request: Request, *, pack_name: str) -> None:
+    """Transitional core→pack auth for agent execution (sprint 5.9.1).
+
+    When the request carries ``Authorization: Bearer`` it MUST be a valid
+    dispatch token signed with THIS pack's own secret (aud=pack:<name>) —
+    another pack's token fails the audience check. Without a bearer token
+    the legacy shared token path stays available while
+    ``LEGACY_INTERNAL_TOKEN=true``; sprint 5.9.4 flips this to JWT-only.
+    """
+    import jwt
+
+    from shared.pack_security import (
+        bearer_from_headers,
+        legacy_internal_token_allowed,
+        load_dispatch_secret,
+        verify_core_dispatch_token,
+    )
+
+    token = bearer_from_headers(request.headers)
+    if token is None:
+        if legacy_internal_token_allowed():
+            return
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="PACK_UNAUTHENTICATED: требуется Bearer dispatch token.",
+        )
+    secret = load_dispatch_secret(pack_name)
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="PACK_UNAUTHENTICATED: dispatch secret не смонтирован.",
+        )
+    try:
+        verify_core_dispatch_token(token, expected_pack=pack_name, key=secret)
+    except jwt.PyJWTError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"PACK_UNAUTHENTICATED: неверный dispatch token ({exc}).",
+        ) from exc

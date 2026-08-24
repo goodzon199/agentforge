@@ -414,14 +414,22 @@ class Orchestrator:
         legacy single-vertical setting is the fallback for a fresh install
         where autoparts has not been registered yet.
         """
+        return self._resolve_pack_for(db, agent_type)[1]
+
+    def _resolve_pack_for(self, db: Session, agent_type: str) -> tuple[str | None, str]:
+        """Resolve the owning pack's name and base URL for ``agent_type``.
+
+        The name feeds the per-pack dispatch token (sprint 5.9.1); None when
+        only the legacy default vertical is available.
+        """
         from app.models import Pack
 
         packs = db.scalars(select(Pack).where(Pack.is_active.is_(True))).all()
         for pack in packs:
             agent_names = [a.get("type") for a in (pack.agents or [])]
             if agent_type in agent_names:
-                return pack.base_url
-        return settings.autoparts_internal_url
+                return pack.name, pack.base_url
+        return None, settings.autoparts_internal_url
 
     def _dispatch_remote(
         self,
@@ -444,11 +452,25 @@ class Orchestrator:
         from shared.internal import internal_post
 
         from app.core.config import settings
+        from app.services.pack_identity_service import PackIdentityService
         from app.tracing.tracer import trace
+
+        pack_name, pack_base_url = self._resolve_pack_for(db, agent_type)
+        dispatch_id = str(uuid.uuid4())
+        extra_headers: dict[str, str] | None = None
+        if pack_name:
+            token = PackIdentityService(db).issue_dispatch_token(
+                pack_name,
+                tenant_id=str(task.company_id) if task.company_id else None,
+                task_id=str(task.id),
+                dispatch_id=dispatch_id,
+            )
+            if token:
+                extra_headers = {"Authorization": f"Bearer {token}"}
 
         try:
             result = internal_post(
-                self._pack_base_url_for(db, agent_type),
+                pack_base_url,
                 "/internal/agents/execute",
                 payload={
                     "agent_type": agent_type,
@@ -456,10 +478,11 @@ class Orchestrator:
                     "input_data": task.input_data or {},
                     "task_id": str(task.id),
                     "company_id": str(task.company_id) if task.company_id else None,
-                    "dispatch_id": str(uuid.uuid4()),
+                    "dispatch_id": dispatch_id,
                     "context": self._build_pack_context(db, task),
                 },
                 timeout=settings.llm_read_timeout + 10.0,
+                extra_headers=extra_headers,
             )
         except Exception as exc:  # pragma: no cover - network error path
             logger.warning(

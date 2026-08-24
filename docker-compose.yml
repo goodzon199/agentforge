@@ -1,4 +1,4 @@
-name: agentforge-services
+﻿name: agentforge-services
 
 # Sprint 5.x microservices: core (platform/gateway) + autoparts + beauty
 # (domain packs) with separate databases. Build context is ./backend so each
@@ -160,6 +160,12 @@ services:
       AUTOPARTS_INTERNAL_URL: http://autoparts-api:8000
       PACK_BASE_URLS: '["http://autoparts-api:8000","http://beauty-api:8000"]'
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-dev-internal-token-change-me}
+      INTERNAL_JWT_KEY: ${INTERNAL_JWT_KEY:-dev-only-agentforge-internal-jwt-key-change-me}
+      LEGACY_INTERNAL_TOKEN: ${LEGACY_INTERNAL_TOKEN:-true}
+    volumes:
+      # Sprint 5.9.1: per-pack dispatch secrets (core signs aud=pack:<name>
+      # tokens with them). Never committed; provisioned into .secrets/.
+      - ./.secrets:/run/secrets/pack-credentials:ro
     ports:
       - "${CORE_API_PORT:-8011}:8000"
     healthcheck:
@@ -210,6 +216,10 @@ services:
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-admin123}
       ENVIRONMENT: ${ENVIRONMENT:-development}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-dev-internal-token-change-me}
+      PACK_SECRETS_DIR: /run/secrets/pack-credentials
+      LEGACY_INTERNAL_TOKEN: ${LEGACY_INTERNAL_TOKEN:-true}
+    volumes:
+      - ./.secrets:/run/secrets/pack-credentials:ro
     ports:
       - "${AUTOPARTS_API_PORT:-8012}:8000"
     healthcheck:
@@ -238,6 +248,10 @@ services:
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-development}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:-dev-internal-token-change-me}
+      PACK_SECRETS_DIR: /run/secrets/pack-credentials
+      LEGACY_INTERNAL_TOKEN: ${LEGACY_INTERNAL_TOKEN:-true}
+    volumes:
+      - ./.secrets:/run/secrets/pack-credentials:ro
     ports:
       - "${BEAUTY_API_PORT:-8013}:8000"
 

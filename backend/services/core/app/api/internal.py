@@ -17,6 +17,36 @@ router = APIRouter(
     dependencies=[Depends(require_internal_token)],
 )
 
+# Sprint 5.9.1: token issuance must be reachable WITHOUT the legacy shared
+# token — the bootstrap secret is the credential. Guarded by pack identity.
+token_router = APIRouter(prefix="/internal", tags=["internal"])
+
+
+@token_router.post("/token")
+def issue_pack_token(
+    db: Session = Depends(get_db),
+    x_pack_id: str | None = Header(default=None, alias="X-Pack-Id"),
+    x_pack_credential: str | None = Header(default=None, alias="X-Pack-Credential"),
+) -> dict[str, Any]:
+    """Exchange a pack bootstrap secret for a short-lived service JWT.
+
+    The service token proves identity only: it carries neither tenant_id nor
+    permissions. Tenant-scoped access is granted exclusively through
+    workload tokens minted by core during dispatch (5.9.3).
+    """
+    from app.services.pack_identity_service import PackIdentityService
+
+    identity = PackIdentityService(db).authenticate(x_pack_id or "", x_pack_credential)
+    token, ttl = PackIdentityService(db).issue_service_token(identity)
+    db.commit()
+    return {
+        "access_token": token,
+        "token_type": "Bearer",
+        "expires_in": ttl,
+        "pack_id": identity.pack_id,
+        "credential_version": identity.credential_version,
+    }
+
 
 def _get_or_404(db: Session, model, entity_id: str):
     try:

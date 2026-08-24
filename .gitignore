@@ -36,3 +36,6 @@ backups/
 scripts/backups/
 
 tsconfig.tsbuildinfo
+
+# Pack secrets (sprint 5.9.1): never commit plaintext credentials
+.secrets/

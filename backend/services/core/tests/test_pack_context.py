@@ -11,8 +11,8 @@ import uuid
 import pytest
 from sqlalchemy import select
 
-from app.models import Conversation, ConversationMessage, Customer, Pack, Task
 from app.core.config import settings
+from app.models import Conversation, ConversationMessage, Customer, Pack, Task
 from app.orchestrator.orchestrator import Orchestrator
 
 

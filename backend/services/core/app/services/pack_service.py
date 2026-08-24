@@ -16,8 +16,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models import Agent, Company, Pack
+from app.models import Agent, Company, Pack, PackIdentityStatus
 from app.models.enums import AgentStatus, AgentType
+from app.services.pack_identity_service import PackIdentityService
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +253,7 @@ class PackService:
         # Sprint 5.8.3: sync pack agents into core's agents table so the
         # orchestrator can resolve remote agents by slug (chat pipeline).
         self._sync_pack_agents(pack)
+        self._identity_set_status(pack.name, PackIdentityStatus.active)
         pack.is_active = True
         pack.state = PackState.active
         self.db.commit()
@@ -350,6 +352,8 @@ class PackService:
         # Registry projection follows the lifecycle: disabled pack -> its
         # agents disappear from routing/UI until re-enabled.
         self._deactivate_pack_agents(pack)
+        # Sprint 5.9.1: a disabled pack's credentials stop working at once.
+        self._identity_set_status(name, PackIdentityStatus.disabled)
         self.db.commit()
         self.db.refresh(pack)
         return pack
@@ -391,8 +395,23 @@ class PackService:
         self._guard(pack, "uninstall")
         # Registry projection is removed with the pack.
         self._deactivate_pack_agents(pack, delete=True)
+        # Sprint 5.9.1: identity survives the pack (revoked, not reusable);
+        # reinstall provisions a fresh credential_version.
+        self._identity_set_status(name, PackIdentityStatus.revoked)
         self.db.delete(pack)
         self.db.commit()
+
+    def _identity_set_status(self, pack_name: str, status: PackIdentityStatus) -> None:
+        """Best-effort identity status sync; missing identity is fine."""
+        try:
+            PackIdentityService(self.db).set_status(pack_name, status)
+        except Exception:  # pragma: no cover - never block the lifecycle
+            logger.warning(
+                "Не удалось обновить identity пака %s до %s",
+                pack_name,
+                status.value,
+                exc_info=True,
+            )
 
     def healthcheck(self, name: str) -> dict[str, Any]:
         pack = self.get(name)

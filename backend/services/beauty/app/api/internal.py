@@ -11,7 +11,7 @@ import pathlib
 import threading
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from shared.agents import run_agent
 from shared.internal import require_internal_token
@@ -118,8 +118,11 @@ def pack_workflows() -> dict[str, Any]:
 
 
 @router.post("/agents/execute")
-def agent_execute(payload: AgentExecuteRequest) -> dict[str, Any]:
+def agent_execute(request: Request, payload: AgentExecuteRequest) -> dict[str, Any]:
     """Run a Beauty agent over the internal contract (sprint 5.4/5.5)."""
+    from shared.internal import require_core_dispatch
+
+    require_core_dispatch(request, pack_name="beauty")
     try:
         agent_cls = get_class(payload.agent_type)
     except KeyError as exc:

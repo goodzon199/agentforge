@@ -26,7 +26,17 @@ class Settings(BaseSettings):
     # domain; autoparts-service is reached over its internal HTTP endpoint.
     autoparts_internal_url: str = "http://autoparts-api:8001"
     # Shared token both services require on /internal/* routes.
+    # Sprint 5.9: transitional only — superseded by per-pack identities
+    # (docs/PACK_SECURITY.md). While enabled, every acceptance is audited.
     internal_api_token: str = "dev-internal-token-change-me"
+    legacy_internal_token: bool = True
+
+    # Sprint 5.9.1 pack security: core-only signing key for service/workload
+    # JWTs (packs receive ready bearer tokens and never see this key) and the
+    # mount point of per-pack dispatch secrets (docker secret files).
+    internal_jwt_key: str = "dev-only-agentforge-internal-jwt-key-change-me"
+    internal_jwt_ttl_seconds: int = 300
+    pack_secrets_dir: str = "/run/secrets/pack-credentials"
 
     # Database
     database_url: str = "postgresql+psycopg://agentos:agentos_secret@localhost:5432/agentos"

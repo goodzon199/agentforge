@@ -318,23 +318,27 @@ TTL 5 минут ограничивает остаточное окно, но о
 | Пункт | Содержание | Готовность |
 |---|---|---|
 | 5.9.0 | этот документ: threat model + security contract (утверждён с поправками) | [x] |
-| 5.9.1 | PackIdentity: модель, миграция, генерация секретов, one-time reveal, hash storage, rotation, revocation, credential_version, `POST /internal/token` → service JWT, per-pack dispatch credential, compose secrets | [ ] |
+| 5.9.1 | PackIdentity: модель, миграция, генерация секретов, one-time reveal, hash storage, rotation, revocation, credential_version, `POST /internal/token` → service JWT, per-pack dispatch credential, compose secrets | [x] |
 | 5.9.2 | declared/granted permissions: миграция bootstrap для builtin-паков, admin API, effective-формула | [ ] |
 | 5.9.3 | workload/tenant delegation: workload-токены при dispatch, Context API по ним, object-scope | [ ] |
 | 5.9.4 | enforcement всех `/internal/*`: только JWT, legacy off, коды ошибок | [ ] |
 | 5.9.5 | audit/revocation: `pack.auth.legacy_used`, события грантов, UI отзывов | [ ] |
 | 5.9.6 | EvilPack adversarial suite: автотесты A1–A10 | [ ] |
 
-**DoD 5.9.1:**
+**DoD 5.9.1** (юнит-тесты `test_pack_identity.py`, 15 шт. + live-прогон 10/10):
 
-- [ ] AutoParts secret ≠ Beauty secret
-- [ ] bootstrap secret AutoParts → получает service JWT AutoParts
-- [ ] неверный секрет → 401
-- [ ] Beauty secret с заявкой `autoparts` → 401
-- [ ] после ротации старый секрет → 401
-- [ ] revoked identity → выдача токена 403
-- [ ] token со старым credential_version → отклонён
-- [ ] core→autoparts JWT (`aud=pack:autoparts`) принят автопартсом
-- [ ] тот же JWT → Beauty → отклонён
-- [ ] restart стека → identities/credentials остаются валидны
-- [ ] в БД и репозитории нет plaintext секретов
+- [x] AutoParts secret ≠ Beauty secret
+- [x] bootstrap secret AutoParts → получает service JWT AutoParts
+- [x] неверный секрет → 401
+- [x] Beauty secret с заявкой `autoparts` → 401
+- [x] после ротации старый секрет → 401
+- [x] revoked identity → выдача токена 403
+- [x] token со старым credential_version → отклонён
+- [x] core→autoparts JWT (`aud=pack:autoparts`) принят автопартсом
+- [x] тот же JWT → Beauty → отклонён
+- [x] restart стека → identities/credentials остаются валидны
+- [x] в БД и репозитории нет plaintext секретов
+
+Провижининг dev-стека: админ → `POST /api/v1/packs/{name}/identity/provision`
+→ записать оба plaintext-секрета в `.secrets/{pack}-bootstrap|.dispatch`
+(gitignored; монтируется в core-api и паки как `/run/secrets/pack-credentials`).

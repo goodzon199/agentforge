@@ -4,7 +4,7 @@ import logging
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from shared.agents import run_agent
 from shared.internal import require_internal_token
@@ -77,13 +77,20 @@ def _get_or_404(db: Session, model, entity_id: str):
 
 
 @router.post("/agents/execute")
-def agent_execute(payload: AgentExecuteRequest, db: Session = Depends(get_db)) -> dict[str, Any]:
+def agent_execute(
+    request: Request,
+    payload: AgentExecuteRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
     """Run a domain agent over the internal contract (orchestration dispatch).
 
     Core's SystemAgent routes a task to a domain agent; core has no domain
     agent implementations, so it posts here with agent_type + objective +
     input_data and the domain side executes it with its own registry.
     """
+    from shared.internal import require_core_dispatch
+
+    require_core_dispatch(request, pack_name="autoparts")
     from app.agents.registry import agent_registry
     from app.orchestrator.orchestrator import orchestrator
 
