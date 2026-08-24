@@ -284,11 +284,10 @@ TTL 5 минут ограничивает остаточное окно, но о
 
 Даже «свой» `company_id` в теле запроса игнорируется в пользу токена.
 
-## 5A. Workload Delegation — спецификация этапа 5.9.3 (на утверждении)
+## 5A. Workload Delegation — спецификация этапа 5.9.3 (реализована)
 
-> Статус: **черновик спеки (5.9.3a), ждёт утверждения**. Имплементация (5.9.3b)
-> не начинается до согласования. Пункт «Решение» = предложение по умолчанию;
-> возражение по любому из D1–D7 достаточно для правки контракта.
+> Статус: **реализована** (5.9.3b, с инвариантами I1–I4 ниже). Пункт «Решение» =
+> согласованное предложение (D1–D7 утверждены без изменений).
 
 ### 5A.1 Принцип
 
@@ -488,6 +487,29 @@ service JWT **не предусматривается** (D5).
 Regression: webchat → Core → AutoParts Intake → Context API → clarification →
 Core Conversation продолжает работать end-to-end.
 
+### 5A.12 Обязательные инварианты (утверждены, проверяются тестами)
+
+- **I1 — явный тип токена.** Каждый JWT, подписанный Core, несёт
+  `token_type`: `service` | `workload` | `dispatch`. Наличие `tenant_id`/
+  `task_id` тип не заменяет. `/internal/context/*` принимает только
+  `token_type=workload`; pack-side verify dispatch-токена требует
+  `token_type=dispatch`; service-endpoints требуют `service`. Убирает класс
+  token-confusion атак между тремя видами токенов.
+- **I2 — OPERATION_PERMISSIONS fail-closed.** Операция отсутствует в реестре
+  → dispatch **запрещён** (ошибка задачи). Никогда «unknown → permissions=[] →
+  продолжаем». Тест: каждая комбинация (пак × agent_type из манифестов)
+  имеет запись в реестре.
+- **I3 — TENANT_SCOPE_OPERATIONS allowlist.** `scope_mode=tenant` разрешён
+  только операциям из явного allowlist в коде Core; попытка выпустить
+  tenant-scope для операции вне списка → отказ dispatch. Default везде
+  `explicit`.
+- **I4 — правила TTL.** Дедлайн задачи ≤ now → workload token вообще не
+  выпускается (dispatch отклоняется). При проверке leeway на clock-skew
+  10 секунд; `exp` никогда не превышает дедлайн задачи.
+
+Граница этапа: 5.9.3 доказывает модель на Context API; Actions/Memory/Tools
+и остальные `/internal/*` закрываются тем же enforcement-механизмом в 5.9.4.
+
 ---
 
 ## 7. Совместимость и план перехода
@@ -524,8 +546,20 @@ Core Conversation продолжает работать end-to-end.
 | 5.9.0 | этот документ: threat model + security contract (утверждён с поправками) | [x] |
 | 5.9.1 | PackIdentity: модель, миграция, генерация секретов, one-time reveal, hash storage, rotation, revocation, credential_version, `POST /internal/token` → service JWT, per-pack dispatch credential, compose secrets | [x] |
 | 5.9.2 | declared/granted permissions: миграция bootstrap для builtin-паков, admin API, effective-формула | [x] |
-| 5.9.3a | workload delegation: спецификация (раздел 5A) — **на утверждении** | [ ] |
-| 5.9.3b | workload/tenant delegation по разделу 5A: WorkloadTokenService, principal, Context API migration, current-grant recheck, audit, миграция паков | [ ] |
+| 5.9.3a | workload delegation: спецификация (раздел 5A) — утверждена с инвариантами I1–I4 | [x] |
+| 5.9.3b | workload/tenant delegation по разделу 5A: WorkloadTokenService, principal, Context API migration, current-grant recheck, audit, миграция паков | [x] |
+
+**DoD 5.9.3** (юнит-тесты `test_workload_adversarial.py`, 14 шт. + `test_pack_context.py`
+13 шт.; live-прогон 7/7):
+
+- [x] I1 `token_type` на всех Core-signed JWT; Context API принимает только workload (service-JWT → 401 + аудит)
+- [x] I2 fail-closed `OPERATION_PERMISSIONS`; unknown operation → dispatch запрещён
+- [x] I3 tenant-scope только для allowlist-операций
+- [x] I4 exp = min(TTL, deadline); deadline в прошлом → токен не выдаётся, dispatch отклонён
+- [x] W1–W11 матрица (cross-tenant 404, out-of-scope 403, replay, revocation, rotation, grant-recheck)
+- [x] active-dispatch binding (`pack_dispatches`), supersede при replay, терминальные статусы
+- [x] аудит `pack.workload.dispatched` / `pack.workload.denied` с reason-enum
+- [x] webchat round-trip на workload-токене (autoparts intake), jti+task_id зафиксированы
 | 5.9.4 | enforcement всех `/internal/*`: только JWT, legacy off, коды ошибок | [ ] |
 | 5.9.5 | audit/revocation: `pack.auth.legacy_used`, события грантов, UI отзывов | [ ] |
 | 5.9.6 | EvilPack adversarial suite: автотесты A1–A10 | [ ] |
