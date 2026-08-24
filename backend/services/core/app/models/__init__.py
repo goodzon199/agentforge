@@ -13,6 +13,12 @@ from app.models.llm_usage import LLMUsage
 from app.models.memory import KnowledgeEntry, LongMemory, MemoryEntry, ShortMemory
 from app.models.pack import Pack
 from app.models.pack_identity import PackIdentity, PackIdentityStatus
+from app.models.pack_permission import (
+    PackDeclaredPermission,
+    PackGrantSource,
+    PackGrantStatus,
+    PackPermissionGrant,
+)
 from app.models.prompt_version import PromptVersion
 from app.models.task import Task, TaskEvent
 from app.models.trace import Span, Trace
@@ -36,8 +42,12 @@ __all__ = [
     "LongMemory",
     "MemoryEntry",
     "Pack",
+    "PackDeclaredPermission",
+    "PackGrantSource",
+    "PackGrantStatus",
     "PackIdentity",
     "PackIdentityStatus",
+    "PackPermissionGrant",
     "PromptVersion",
     "ShortMemory",
     "Span",

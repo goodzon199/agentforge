@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import datetime as dt
 import uuid
 
 import jwt

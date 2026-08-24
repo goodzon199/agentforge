@@ -319,7 +319,7 @@ TTL 5 минут ограничивает остаточное окно, но о
 |---|---|---|
 | 5.9.0 | этот документ: threat model + security contract (утверждён с поправками) | [x] |
 | 5.9.1 | PackIdentity: модель, миграция, генерация секретов, one-time reveal, hash storage, rotation, revocation, credential_version, `POST /internal/token` → service JWT, per-pack dispatch credential, compose secrets | [x] |
-| 5.9.2 | declared/granted permissions: миграция bootstrap для builtin-паков, admin API, effective-формула | [ ] |
+| 5.9.2 | declared/granted permissions: миграция bootstrap для builtin-паков, admin API, effective-формула | [x] |
 | 5.9.3 | workload/tenant delegation: workload-токены при dispatch, Context API по ним, object-scope | [ ] |
 | 5.9.4 | enforcement всех `/internal/*`: только JWT, legacy off, коды ошибок | [ ] |
 | 5.9.5 | audit/revocation: `pack.auth.legacy_used`, события грантов, UI отзывов | [ ] |
@@ -342,3 +342,27 @@ TTL 5 минут ограничивает остаточное окно, но о
 Провижининг dev-стека: админ → `POST /api/v1/packs/{name}/identity/provision`
 → записать оба plaintext-секрета в `.secrets/{pack}-bootstrap|.dispatch`
 (gitignored; монтируется в core-api и паки как `/run/secrets/pack-credentials`).
+
+**DoD 5.9.2** (юнит-тесты `test_pack_permissions.py`, 17 шт. + live-проверки):
+
+- [x] bootstrap autoparts/beauty → 5+5 грантов, `grant_source=migration_bootstrap`, idempotent
+- [x] новый пак: declared есть, granted/effective пустые
+- [x] grant declared-разрешения → появляется в effective; revoke → мгновенно исчезает
+- [x] грант без declaration (stale active-строка) → в effective не попадает; выдать undeclared нельзя (409)
+- [x] неизвестное разрешение в манифесте → validation error при регистрации
+- [x] upgrade добавил permission → остаётся pending, старые права работают, авто-гранта нет
+- [x] удаление из манифеста при живом гранте → `inactive_not_declared` (строка хранится)
+- [x] возврат LOW/MEDIUM → авто-восстановление; возврат HIGH → только явный re-grant админом
+- [x] tenant-scoped грант компании A не действует для B; глобальный вид tenant-гранты игнорирует
+- [x] RBAC: owner/superuser могут grant/revoke; manager → 403
+- [x] аудит: `pack.permission.requested/.granted/.revoked/.removed_from_manifest` с reason/risk/tenant
+- [x] EvilPack-провокация: манифест заявляет `order.create` → регистрация ок, effective пуст
+
+Реализация: каталог 21 разрешения в коде (`app/core/pack_permissions.py`,
+risk low/medium/high); `PackPermissionGrant` + `PackDeclaredPermission`
+(софт-удаление через `removed_at`), миграция `e8f21b4c6a93` с bootstrap-SQL;
+service-level `bootstrap_builtin()` для юнит-тестов; sync_declared вызывается
+из `PackService.register`. Решение: enable() на гранты в этом спринте НЕ
+гейтится — реальный запрет появится вместе с workload-токенами и enforcement
+(5.9.3–5.9.4). Live: bootstrap-гранты подтверждены psql, roundtrip
+revoke→re-grant `supplier.search` прошёл с аудитом.

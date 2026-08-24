@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -8,14 +9,26 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
+from app.core.pack_permissions import CATALOG
 from app.models import User
 from app.services.audit_service import AuditService
 from app.services.pack_identity_service import PackIdentityError, PackIdentityService
+from app.services.pack_permission_service import (
+    PackPermissionError,
+    PackPermissionService,
+)
 from app.services.pack_service import PackError, PackService
 
 router = APIRouter(prefix="/packs", tags=["packs"])
 
 MANAGER_ROLES = frozenset({"owner", "admin"})
+
+
+class PermissionActionPayload(BaseModel):
+    """Grant/revoke request. ``company_id`` scopes the grant to a tenant."""
+
+    company_id: uuid.UUID | None = None
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class ManifestPayload(BaseModel):
@@ -32,6 +45,19 @@ def _require_manager(actor: User) -> None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Управление packs доступно владельцу или администратору.",
+        )
+
+
+def _require_permission_admin(actor: User) -> None:
+    """Grant/revoke is stricter than pack management (sprint 5.9.2).
+
+    Only the platform superuser or a tenant OWNER may decide rights —
+    plain managers/admins cannot escalate a pack's powers.
+    """
+    if not actor.is_superuser and actor.role != "owner":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Выдача и отзыв разрешений доступны только владельцу.",
         )
 
 
@@ -233,3 +259,95 @@ def provision_pack_identity(
     )
     db.commit()
     return result
+
+
+# --- Declared / granted permissions (sprint 5.9.2) ---------------------------
+
+
+def _permission_service(db: Session) -> PackPermissionService:
+    return PackPermissionService(db)
+
+
+@router.get("/{name}/permissions")
+def get_pack_permissions(
+    name: str,
+    company_id: uuid.UUID | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Declared vs granted vs effective vs pending for one pack.
+
+    Without ``company_id`` the global (tenant-neutral) view is returned;
+    with it, tenant-specific grants of that company are included.
+    """
+    _service(db).get(name)  # 404 when the pack is unknown
+    snapshot = _permission_service(db).snapshot(name, tenant_id=company_id)
+    if company_id is not None:
+        snapshot["tenant_id"] = str(company_id)
+    return snapshot
+
+
+@router.post("/{name}/permissions/{permission}/grant")
+def grant_pack_permission(
+    name: str,
+    permission: str,
+    payload: PermissionActionPayload | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require_permission_admin(user)
+    _service(db).get(name)
+    payload = payload or PermissionActionPayload()
+    if permission not in CATALOG:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Неизвестное платформе разрешение {permission!r}.",
+        )
+    try:
+        row = _permission_service(db).grant(
+            name,
+            permission,
+            actor_id=user.id,
+            tenant_id=payload.company_id,
+            reason=payload.reason,
+        )
+    except PackPermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    db.commit()
+    return {
+        "pack": name,
+        "permission": row.permission,
+        "status": row.status,
+        "grant_source": row.grant_source,
+        "company_id": str(row.tenant_id) if row.tenant_id else None,
+    }
+
+
+@router.post("/{name}/permissions/{permission}/revoke")
+def revoke_pack_permission(
+    name: str,
+    permission: str,
+    payload: PermissionActionPayload | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require_permission_admin(user)
+    _service(db).get(name)
+    payload = payload or PermissionActionPayload()
+    try:
+        row = _permission_service(db).revoke(
+            name,
+            permission,
+            actor_id=user.id,
+            tenant_id=payload.company_id,
+            reason=payload.reason,
+        )
+    except PackPermissionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    db.commit()
+    return {
+        "pack": name,
+        "permission": row.permission,
+        "status": row.status,
+        "company_id": str(row.tenant_id) if row.tenant_id else None,
+    }

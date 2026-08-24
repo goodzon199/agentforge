@@ -16,9 +16,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.pack_permissions import unknown_permissions
 from app.models import Agent, Company, Pack, PackIdentityStatus
 from app.models.enums import AgentStatus, AgentType
 from app.services.pack_identity_service import PackIdentityService
+from app.services.pack_permission_service import PackPermissionService
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +130,14 @@ class PackService:
     def register(self, base_url: str, manifest: PackManifest) -> Pack:
         """Upsert a pack from its manifest (state=installed on create)."""
         warnings = self.validate(base_url, manifest)
+        # Sprint 5.9.2: the manifest may only REQUEST known permissions.
+        # Unknown names are a validation error, never silent acceptance.
+        unknown = unknown_permissions(manifest.permissions)
+        if unknown:
+            raise PackError(
+                f"Манифест пака {manifest.name!r} заявляет неизвестные "
+                f"платформе разрешения: {', '.join(sorted(unknown))}."
+            )
         existing = self.db.scalars(
             select(Pack).where(Pack.name == manifest.name)
         ).first()
@@ -178,6 +188,16 @@ class PackService:
             existing.signature = manifest.signature
             existing.routes = manifest.model_dump(mode="json")["routes"]
             pack = existing
+
+        # Sprint 5.9.2: materialize the declared-permission projection and
+        # align grant statuses with the manifest diff (upgrade review flow).
+        diff = PackPermissionService(self.db).sync_declared(
+            pack.name, list(manifest.permissions), manifest.version
+        )
+        if any((diff["added"], diff["removed"], diff["auto_restored"], diff["awaiting_review"])):
+            logger.info(
+                "pack %s permission diff on register: %s", manifest.name, diff
+            )
 
         self.db.commit()
         self.db.refresh(pack)
